@@ -8,14 +8,19 @@ const API_BASE = window.location.origin.includes(':8080')
   : window.location.origin;
 
 const TOKEN_STORAGE_KEY = 'wa_admin_token';
-let authToken = localStorage.getItem(TOKEN_STORAGE_KEY) || null;
+
+// Función para obtener siempre el token fresco del almacenamiento local
+function getAuthToken() {
+  return localStorage.getItem(TOKEN_STORAGE_KEY) || null;
+}
 
 // ---------------------------------------------------------------------
 // Fetch autenticado
 // ---------------------------------------------------------------------
 async function apiFetch(path, options = {}) {
+  const currentToken = getAuthToken();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
@@ -43,12 +48,12 @@ function showApp() {
 }
 
 function showLogin() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
 
 function logout() {
-  authToken = null;
   localStorage.removeItem(TOKEN_STORAGE_KEY);
   showLogin();
 }
@@ -65,8 +70,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    authToken = data.token;
-    localStorage.setItem(TOKEN_STORAGE_KEY, authToken);
+    localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
     showApp();
   } catch (err) {
     errorEl.textContent = err.message || 'No se pudo iniciar sesion';
@@ -344,12 +348,12 @@ function refreshAll() {
   loadLogs();
 }
 
-if (authToken) {
+if (getAuthToken()) {
   showApp();
 } else {
   showLogin();
 }
 
 setInterval(() => {
-  if (authToken) fetchHealth();
+  if (getAuthToken()) fetchHealth();
 }, 10000);
