@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Automation - Panel</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- Pantalla de login (Seccion 27) -->
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-form">
+      <h1>WhatsApp Automation</h1>
+      <p class="subtitle">Panel administrativo</p>
+      <input type="email" id="login-email" placeholder="Correo" required />
+      <input type="password" id="login-password" placeholder="Contraseña" required />
+      <button type="submit" class="btn">Ingresar</button>
+      <p id="login-error" class="error-text"></p>
+    </form>
+  </div>
+
+  <!-- Panel principal -->
+  <div id="app" class="app hidden">
+    <header>
+      <div>
+        <h1>WhatsApp Automation</h1>
+        <p class="subtitle">Panel administrativo</p>
+      </div>
+      <button id="btn-logout" class="btn btn-secondary">Salir</button>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="tab-dashboard">Estado</button>
+      <button class="tab-btn" data-tab="tab-customers">Clientes</button>
+      <button class="tab-btn" data-tab="tab-conversations">Conversaciones</button>
+      <button class="tab-btn" data-tab="tab-queue">Cola</button>
+      <button class="tab-btn" data-tab="tab-scheduled">Programados</button>
+      <button class="tab-btn" data-tab="tab-logs">Errores / Logs</button>
+    </nav>
+
+    <main>
+      <!-- Estado -->
+      <section id="tab-dashboard" class="tab-panel">
+        <section class="status-grid" id="status-grid">
+          <div class="status-card"><h2>Backend</h2><span class="status-badge" id="status-backend">...</span></div>
+          <div class="status-card"><h2>Base de datos</h2><span class="status-badge" id="status-database">...</span></div>
+          <div class="status-card"><h2>WhatsApp</h2><span class="status-badge" id="status-whatsapp">...</span></div>
+        </section>
+
+        <section class="qr-section" id="qr-section">
+          <h2>Vincular WhatsApp</h2>
+          <p class="note">Si el estado de WhatsApp no es CONECTADO, genera el QR y escanealo desde la app de WhatsApp (Dispositivos vinculados).</p>
+          <button id="btn-qr" class="btn">Generar QR</button>
+          <div id="qr-container"></div>
+        </section>
+
+        <section class="qr-section">
+          <h2>Control de automatizacion</h2>
+          <p class="note">Estado actual: <strong id="automation-status">-</strong></p>
+          <div class="btn-row">
+            <button class="btn" data-automation="activate">Activar</button>
+            <button class="btn btn-secondary" data-automation="pause">Pausar</button>
+            <button class="btn btn-danger" data-automation="stop">Detener</button>
+            <button class="btn" data-automation="resume">Reanudar</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- Clientes -->
+      <section id="tab-customers" class="tab-panel hidden">
+        <h2>Clientes</h2>
+        <table class="data-table" id="table-customers">
+          <thead><tr><th>ID</th><th>Telefono</th><th>Nombre</th><th>Estado</th><th>Interes</th><th>Ultimo mensaje</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Conversaciones -->
+      <section id="tab-conversations" class="tab-panel hidden">
+        <h2>Conversaciones</h2>
+        <table class="data-table" id="table-conversations">
+          <thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Ultimo mensaje</th><th>Accion</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Cola -->
+      <section id="tab-queue" class="tab-panel hidden">
+        <h2>Cola de mensajes</h2>
+        <div class="btn-row">
+          <button class="btn" data-queue="resume">Reanudar cola</button>
+          <button class="btn btn-secondary" data-queue="pause">Pausar cola</button>
+          <button class="btn btn-danger" data-queue="stop">Detener cola</button>
+        </div>
+        <table class="data-table" id="table-queue">
+          <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Estado</th><th>Intentos</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Programados -->
+      <section id="tab-scheduled" class="tab-panel hidden">
+        <h2>Mensajes programados</h2>
+        <table class="data-table" id="table-scheduled">
+          <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Programado para</th><th>Estado</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Logs -->
+      <section id="tab-logs" class="tab-panel hidden">
+        <h2>Errores / Logs recientes</h2>
+        <table class="data-table" id="table-logs">
+          <thead><tr><th>Fecha</th><th>Nivel</th><th>Evento</th><th>Mensaje</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

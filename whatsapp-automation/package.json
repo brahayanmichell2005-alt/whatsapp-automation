@@ -1,0 +1,50 @@
+{
+  "name": "whatsapp-automation",
+  "version": "2.0.0",
+  "description": "Automatizacion de WhatsApp: Node.js + Express en Vercel, PostgreSQL en Supabase, Evolution API",
+  "private": true,
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "dev": "nodemon backend/src/server.js",
+    "worker": "node backend/src/workers/message.worker.js",
+    "panel": "npx --yes serve public -l 8080",
+    "test": "jest",
+    "check": "node --test \"backend/checks/*.check.js\"",
+    "smoke": "node backend/scripts/smoke-test.js",
+    "simulate:webhook": "node backend/scripts/simulate-webhook.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "express-validator": "^7.1.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pino": "^9.1.0",
+    "pino-http": "^10.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.0",
+    "pino-pretty": "^11.1.0",
+    "supertest": "^7.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/backend"
+    ],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "clearMocks": true
+  }
+}

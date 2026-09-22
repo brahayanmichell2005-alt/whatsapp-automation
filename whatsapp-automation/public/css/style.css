@@ -1,0 +1,277 @@
+:root {
+  --bg: #0f172a;
+  --card-bg: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --up: #22c55e;
+  --down: #ef4444;
+  --unknown: #64748b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 24px 20px 8px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+}
+
+main {
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.status-card {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}
+
+.status-card h2 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--unknown);
+}
+
+.status-badge.up {
+  background: var(--up);
+  color: #06210f;
+}
+
+.status-badge.down {
+  background: var(--down);
+  color: #2a0a0a;
+}
+
+.note {
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.qr-section {
+  margin-top: 28px;
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.qr-section h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.qr-section .note {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.btn {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #1d4ed8;
+}
+
+#qr-container {
+  margin-top: 16px;
+  text-align: center;
+}
+
+#qr-container img {
+  max-width: 240px;
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Login */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-form {
+  background: var(--card-bg);
+  padding: 32px;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+}
+
+.login-form h1 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+}
+
+.login-form input {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.login-form .btn {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.error-text {
+  color: var(--down);
+  font-size: 0.85rem;
+  margin-top: 10px;
+  min-height: 1em;
+}
+
+/* App shell */
+.app header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.btn-secondary {
+  background: #334155;
+}
+
+.btn-secondary:hover {
+  background: #475569;
+}
+
+.btn-danger {
+  background: #dc2626;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid #334155;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--text);
+  border-bottom-color: #2563eb;
+}
+
+.tab-panel h2 {
+  font-size: 1.1rem;
+  margin: 8px 0 16px;
+}
+
+/* Tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #334155;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.data-table tr:hover td {
+  background: #1e293b;
+}
+
+.badge-inline {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+}
