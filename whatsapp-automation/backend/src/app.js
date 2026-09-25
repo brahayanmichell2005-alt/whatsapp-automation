@@ -7,6 +7,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const pinoHttp = require('pino-http');
+const path = require('path'); // <-- 1. Añadir esta importación
 
 const env = require('./config/env');
 const logger = require('./utils/logger');
@@ -53,6 +54,9 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 
+// <-- 2. Servir la carpeta public de manera local (index.html, css, js)
+app.use(express.static(path.join(__dirname, '../../public')));
+
 // Rutas
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/instance', instanceRoutes);
@@ -66,7 +70,15 @@ app.use('/api/scheduled-messages', scheduleRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/cron', cronRoutes);
 
+// Nota: Si quieres que la raíz cargue el index.html en local en lugar del JSON, 
+// puedes descomentar la siguiente línea o dejar el endpoint de estado:
+/*
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../public/index.html'));
+});
+*/
+
+app.get('/status', (req, res) => {
   res.json({
     name: 'whatsapp-automation-backend',
     status: 'running',

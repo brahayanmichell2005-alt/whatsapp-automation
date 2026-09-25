@@ -44,10 +44,47 @@ async function getConnectionState() {
   return data;
 }
 
+// Envuelve un error de axios con contexto util (paso, url y status reales)
+// en vez de dejar pasar el mensaje generico "Request failed with status code X".
+function wrapEvolutionError(step, err) {
+  const status = err.response ? err.response.status : null;
+  const url = err.config ? `${err.config.baseURL || ''}${err.config.url || ''}` : null;
+  const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+  const wrapped = new Error(
+    `Evolution API fallo en "${step}"${status ? ` (HTTP ${status})` : ''}${url ? ` -> ${url}` : ''}: ${detail}`
+  );
+  wrapped.status = status && status !== 404 ? status : 502; // 404 de Evolution != "ruta no existe" en nuestro backend
+  wrapped.cause = err;
+  return wrapped;
+}
+
 // Solicita el QR para vincular WhatsApp (Seccion 22, paso "Obtener QR").
 async function getQrCode() {
-  const { data } = await client.get(`/instance/connect/${instanceName()}`);
-  return data;
+  if (!env.EVOLUTION_API_URL || !instanceName()) {
+    const err = new Error('EVOLUTION_API_URL o EVOLUTION_INSTANCE no estan configurados en las variables de entorno');
+    err.status = 500;
+    throw err;
+  }
+  try {
+    const { data } = await client.get(`/instance/connect/${instanceName()}`);
+    return data;
+  } catch (err) {
+    if (err.response && err.response.status === 404) {
+      logger.info(`La instancia ${instanceName()} no existe. Intentando crearla automáticamente...`);
+      try {
+        await createInstance();
+      } catch (createErr) {
+        throw wrapEvolutionError('crear instancia (POST /instance/create)', createErr);
+      }
+      try {
+        const { data } = await client.get(`/instance/connect/${instanceName()}`);
+        return data;
+      } catch (retryErr) {
+        throw wrapEvolutionError('obtener QR tras crear instancia (GET /instance/connect)', retryErr);
+      }
+    }
+    throw wrapEvolutionError('obtener QR (GET /instance/connect)', err);
+  }
 }
 
 // Cierra la sesion de WhatsApp de la instancia (util para reconectar desde cero).

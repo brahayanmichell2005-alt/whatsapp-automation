@@ -5,7 +5,7 @@
 // En Vercel las variables se definen en: Project -> Settings -> Environment
 // Variables. En local, en un archivo .env (ver .env.example).
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
 function toInt(value, fallback) {
   const n = parseInt(value, 10);
@@ -46,9 +46,12 @@ const env = {
   // Conexiones por instancia serverless (Supabase recomienda pocas).
   DB_POOL_MAX: toInt(process.env.DB_POOL_MAX, 3),
 
-  EVOLUTION_API_URL: process.env.EVOLUTION_API_URL || '',
+  // Se quitan barras finales: si queda "https://host/" y luego se concatena
+  // "/instance/..." el resultado es "host//instance/..." (doble slash), que
+  // muchos proxies delante de Evolution API responden con 404.
+  EVOLUTION_API_URL: (process.env.EVOLUTION_API_URL || '').trim().replace(/\/+$/, ''),
   EVOLUTION_API_KEY: process.env.EVOLUTION_API_KEY || '',
-  EVOLUTION_INSTANCE: process.env.EVOLUTION_INSTANCE || '',
+  EVOLUTION_INSTANCE: (process.env.EVOLUTION_INSTANCE || '').trim(),
 
   WEBHOOK_URL: process.env.WEBHOOK_URL || '',
   // Secreto compartido con Evolution API (cabecera x-webhook-token). Vacio = webhook abierto.
