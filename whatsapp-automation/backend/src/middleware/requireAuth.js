@@ -3,10 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const authService = require('../services/auth.service');
-<<<<<<< HEAD
 const logModel = require('../models/automationLog.model');
-=======
->>>>>>> origin/main
 const logger = require('../utils/logger');
 
 function requireAuth(req, res, next) {
@@ -14,7 +11,6 @@ function requireAuth(req, res, next) {
   const [scheme, token] = header.split(' ');
 
   if (scheme !== 'Bearer' || !token) {
-<<<<<<< HEAD
     return logModel
       .record({
         eventType: 'auth_debug',
@@ -23,24 +19,12 @@ function requireAuth(req, res, next) {
       })
       .catch((e) => logger.error({ err: e.message }, 'No se pudo registrar auth_debug'))
       .finally(() => res.status(401).json({ error: 'Autenticacion requerida' }));
-=======
-    logger.warn({
-      path: req.originalUrl,
-      method: req.method,
-      reason: 'AUTH_HEADER_MISSING_OR_INVALID'
-    }, 'Fallo de autenticacion');
-
-    return res.status(401).json({
-      error: 'Autenticacion requerida'
-    });
->>>>>>> origin/main
   }
 
   try {
     req.user = authService.verifyToken(token);
     return next();
   } catch (err) {
-<<<<<<< HEAD
     const decoded = jwt.decode(token) || {};
     return logModel
       .record({
@@ -50,18 +34,6 @@ function requireAuth(req, res, next) {
       })
       .catch((e) => logger.error({ err: e.message }, 'No se pudo registrar auth_debug'))
       .finally(() => res.status(401).json({ error: 'Token invalido o expirado' }));
-=======
-    logger.error({
-      path: req.originalUrl,
-      method: req.method,
-      reason: err.message,
-      tokenPresent: true
-    }, 'Fallo al verificar token');
-
-    return res.status(401).json({
-      error: 'Token invalido o expirado'
-    });
->>>>>>> origin/main
   }
 }
 
