@@ -4,7 +4,6 @@
 //
 // En local, el scheduler de mensajes programados corre con setInterval y el
 // worker de envio se ejecuta aparte con `npm run worker`.
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const env = require('./config/env');
 const app = require('./app');
 const logger = require('./utils/logger');

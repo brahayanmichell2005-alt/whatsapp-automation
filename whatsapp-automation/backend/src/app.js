@@ -43,7 +43,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Logging estructurado de cada request
-app.use(pinoHttp({ logger }));
+app.use(pinoHttp({ logger, redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-webhook-token"]'] }));
 
 // Rate limiting general de la API (proteccion basica, Seccion 28)
 const apiLimiter = rateLimit({

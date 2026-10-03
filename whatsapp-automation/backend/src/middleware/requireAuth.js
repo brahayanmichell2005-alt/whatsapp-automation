@@ -1,17 +1,40 @@
-﻿const jwt = require('jsonwebtoken');
+// Middleware que protege las rutas administrativas.
+// Espera: Authorization: Bearer <token>
 
-module.exports = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Token no proporcionado o inválido' });
+const jwt = require('jsonwebtoken');
+const authService = require('../services/auth.service');
+const logModel = require('../models/automationLog.model');
+const logger = require('../utils/logger');
+
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const [scheme, token] = header.split(' ');
+
+  if (scheme !== 'Bearer' || !token) {
+    return logModel
+      .record({
+        eventType: 'auth_debug',
+        level: 'ERROR',
+        message: `401 sin token en ${req.method} ${req.path}`,
+      })
+      .catch((e) => logger.error({ err: e.message }, 'No se pudo registrar auth_debug'))
+      .finally(() => res.status(401).json({ error: 'Autenticacion requerida' }));
   }
 
-  const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
+    req.user = authService.verifyToken(token);
+    return next();
   } catch (err) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+    const decoded = jwt.decode(token) || {};
+    return logModel
+      .record({
+        eventType: 'auth_debug',
+        level: 'ERROR',
+        message: `401 token invalido en ${req.method} ${req.path}: ${err.name} - ${err.message}. exp=${decoded.exp} iat=${decoded.iat}`,
+      })
+      .catch((e) => logger.error({ err: e.message }, 'No se pudo registrar auth_debug'))
+      .finally(() => res.status(401).json({ error: 'Token invalido o expirado' }));
   }
-};
+}
+
+module.exports = { requireAuth };
