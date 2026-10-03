@@ -72,6 +72,20 @@ class EvolutionService {
     this.apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
     this.instance = String(process.env.EVOLUTION_INSTANCE || '').trim();
 
+    // Ya no se lanza error al cargar el modulo: si faltan variables,
+    // el error se reporta cuando se usa el servicio (assertConfigured),
+    // para que el resto del backend (y el health check) no se caiga.
+    this.client = axios.create({
+      baseURL: this.baseUrl || undefined,
+      timeout: 20000,
+      headers: {
+        apikey: this.apiKey,
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+
+  assertConfigured() {
     if (!this.baseUrl) {
       throw new Error('EVOLUTION_API_URL no esta configurado');
     }
@@ -83,15 +97,6 @@ class EvolutionService {
     if (!this.instance) {
       throw new Error('EVOLUTION_INSTANCE no esta configurado');
     }
-
-    this.client = axios.create({
-      baseURL: this.baseUrl,
-      timeout: 20000,
-      headers: {
-        apikey: this.apiKey,
-        'Content-Type': 'application/json'
-      }
-    });
   }
 
   /**
@@ -107,6 +112,7 @@ class EvolutionService {
    * 4. Si no devuelve QR, vuelve a GET /instance/connect/{instance}
    */
   async getQrCode() {
+    this.assertConfigured();
     const encodedInstance = encodeURIComponent(this.instance);
 
     // PRIMER INTENTO:
@@ -130,8 +136,8 @@ class EvolutionService {
           )
         );
 
-      // No ocultar errores de autenticación, servidor,
-      // configuración o problemas de red.
+      // No ocultar errores de autenticacion, servidor,
+      // configuracion o problemas de red.
       if (!instanceMissing) {
         throw this.createServiceError(
           error,
@@ -141,13 +147,13 @@ class EvolutionService {
     }
 
     // SEGUNDO PASO:
-    // La instancia no existe → crearla automáticamente.
+    // La instancia no existe -> crearla automaticamente.
     const createResult = await this.createInstance();
 
     const directQr = normalizeQr(createResult);
 
     // En Evolution API con qrcode=true,
-    // el QR puede venir directamente en la respuesta de creación.
+    // el QR puede venir directamente en la respuesta de creacion.
     if (
       directQr.base64 ||
       directQr.code ||
@@ -166,7 +172,7 @@ class EvolutionService {
     }
 
     // TERCER PASO:
-    // Si la creación no devolvió QR, solicitarlo mediante connect.
+    // Si la creacion no devolvio QR, solicitarlo mediante connect.
     try {
       const response = await this.client.get(
         `/instance/connect/${encodedInstance}`
@@ -182,9 +188,11 @@ class EvolutionService {
   }
 
   /**
-   * Crea la instancia automáticamente.
+   * Crea la instancia automaticamente.
    */
   async createInstance() {
+    this.assertConfigured();
+
     try {
       const response = await this.client.post(
         '/instance/create',
@@ -225,6 +233,7 @@ class EvolutionService {
    * Consulta el estado de la instancia.
    */
   async getInstanceStatus() {
+    this.assertConfigured();
     const encodedInstance = encodeURIComponent(this.instance);
 
     try {
@@ -247,9 +256,43 @@ class EvolutionService {
   }
 
   /**
+   * Usado por el health check del dashboard.
+   * Nunca lanza error y responde rapido (max. 5 s).
+   */
+  async checkConnection() {
+    try {
+      this.assertConfigured();
+
+      const encodedInstance = encodeURIComponent(this.instance);
+
+      const response = await this.client.get(
+        `/instance/connectionState/${encodedInstance}`,
+        { timeout: 5000 }
+      );
+
+      const status = extractStatus(response.data) || 'unknown';
+
+      return {
+        ok: true,
+        connected: status === 'open',
+        status
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        connected: false,
+        status: 'error',
+        error: extractErrorMessage(error)
+      };
+    }
+  }
+
+  /**
    * Lista las instancias.
    */
   async fetchInstances() {
+    this.assertConfigured();
+
     try {
       const response = await this.client.get(
         '/instance/fetchInstances'
