@@ -118,10 +118,12 @@ async function fetchHealth() {
 function updateWhatsappBadge(rawStatus) {
   const el = document.getElementById('status-whatsapp');
   if (!el) return;
-  const labels = { CONNECTED: 'CONECTADO', DISCONNECTED: 'DESCONECTADO', CONNECTING: 'CONECTANDO', ERROR: 'ERROR' };
+  const labels = { CONNECTED: 'CONECTADO', DISCONNECTED: 'DESVINCULADO', CONNECTING: 'CONECTANDO', ERROR: 'ERROR' };
   el.textContent = labels[rawStatus] || 'ERROR';
   el.classList.remove('up', 'down');
   el.classList.add(rawStatus === 'CONNECTED' ? 'up' : 'down');
+  const dc = document.getElementById('btn-disconnect');
+  if (dc) dc.hidden = rawStatus !== 'CONNECTED';
 }
 
 // PostgreSQL devuelve fechas ISO (2026-09-19T14:30:00.000Z): se muestran en hora local.
@@ -139,31 +141,117 @@ function updateBadge(service, isUp) {
   el.classList.add(isUp ? 'up' : 'down');
 }
 
-async function generateQrCode() {
+let waPollTimer = null;
+
+function setWaMessage(text, extraNode) {
   const container = document.getElementById('qr-container');
-  const button = document.getElementById('btn-qr');
-  button.disabled = true;
-  button.textContent = 'Generando...';
-  container.innerHTML = '';
+  container.textContent = '';
+  if (text) {
+    const p = document.createElement('p');
+    p.className = 'note';
+    p.textContent = text;
+    container.appendChild(p);
+  }
+  if (extraNode) container.appendChild(extraNode);
+}
+
+function stopWaPolling() {
+  if (waPollTimer) clearInterval(waPollTimer);
+  waPollTimer = null;
+}
+
+// Consulta el estado REAL de Evolution API cada 5 s (maximo 3 minutos).
+function startWaPolling() {
+  stopWaPolling();
+  let tries = 0;
+  waPollTimer = setInterval(async () => {
+    tries += 1;
+    try {
+      const res = await fetch(`${API_BASE}/api/instance/status`);
+      const data = await res.json();
+      updateWhatsappBadge(data.status);
+      if (data.status === 'CONNECTED') {
+        stopWaPolling();
+        setWaMessage('WhatsApp conectado');
+        return;
+      }
+    } catch (err) {
+      /* se reintenta en el siguiente ciclo */
+    }
+    if (tries >= 36) {
+      stopWaPolling();
+      setWaMessage('Tiempo agotado. Genera un codigo nuevo e intentalo otra vez.');
+    }
+  }, 5000);
+}
+
+async function connectWhatsapp(mode) {
+  const btnPairing = document.getElementById('btn-pairing');
+  const btnQr = document.getElementById('btn-qr');
+  const input = document.getElementById('wa-number');
+  let path = '/api/instance/qrcode';
+
+  if (mode === 'pairing') {
+    const number = (input.value || '').replace(/\D/g, '');
+    if (number.length < 8 || number.length > 15) {
+      setWaMessage('Escribe tu numero con codigo de pais, solo digitos (ej. 51910000000).');
+      return;
+    }
+    path += `?number=${encodeURIComponent(number)}`;
+  }
+
+  btnPairing.disabled = true;
+  btnQr.disabled = true;
+  setWaMessage('Conectando con Evolution API...');
+  updateWhatsappBadge('CONNECTING');
 
   try {
-    const data = await apiFetch('/api/instance/qrcode');
-    const base64 = data.base64 || data.qrcode?.base64 || data.code;
-    if (base64) {
-      const src = base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`;
-      container.innerHTML = `<img src="${src}" alt="Codigo QR de WhatsApp" />`;
+    const data = await apiFetch(path);
+    if (data.status === 'CONNECTED') {
+      setWaMessage('WhatsApp conectado');
+      updateWhatsappBadge('CONNECTED');
+      return;
+    }
+    if (data.pairingCode) {
+      const code = String(data.pairingCode).replace(/(.{4})(?=.)/, '$1-');
+      const big = document.createElement('div');
+      big.textContent = code;
+      big.style.cssText = 'font-size:2rem;letter-spacing:.2em;font-weight:700;margin:12px 0';
+      setWaMessage('En WhatsApp: Dispositivos vinculados > Vincular con el numero de telefono. Escribe este codigo:', big);
+      startWaPolling();
+    } else if (data.base64) {
+      const img = document.createElement('img');
+      img.alt = 'Codigo QR de WhatsApp';
+      img.src = data.base64.startsWith('data:') ? data.base64 : `data:image/png;base64,${data.base64}`;
+      setWaMessage('Escanea el QR desde WhatsApp > Dispositivos vinculados.', img);
+      startWaPolling();
     } else {
-      container.innerHTML = '<p class="note">No se recibio un QR. Verifica que la instancia este creada.</p>';
+      setWaMessage('Evolution API aun esta preparando la sesion. Espera unos segundos y vuelve a pulsar el boton.');
     }
   } catch (err) {
-    container.innerHTML = `<p class="note">Error al solicitar el QR: ${err.message}</p>`;
+    updateWhatsappBadge('ERROR');
+    setWaMessage(`No se pudo conectar: ${err.message}`);
   } finally {
-    button.disabled = false;
-    button.textContent = 'Generar QR';
+    btnPairing.disabled = false;
+    btnQr.disabled = false;
   }
 }
 
-document.getElementById('btn-qr')?.addEventListener('click', generateQrCode);
+async function disconnectWhatsapp() {
+  if (!window.confirm('Desconectar WhatsApp de este panel?')) return;
+  stopWaPolling();
+  try {
+    await apiFetch('/api/instance/logout', { method: 'POST' });
+    setWaMessage('WhatsApp desconectado.');
+  } catch (err) {
+    setWaMessage(`No se pudo desconectar: ${err.message}`);
+  }
+  fetchHealth();
+}
+
+document.getElementById('btn-pairing')?.addEventListener('click', () => connectWhatsapp('pairing'));
+document.getElementById('btn-qr')?.addEventListener('click', () => connectWhatsapp('qr'));
+document.getElementById('btn-disconnect')?.addEventListener('click', disconnectWhatsapp);
 
 // ---------------------------------------------------------------------
 // Control de automatizacion

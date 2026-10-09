@@ -37,7 +37,17 @@ async function createInstance(req, res, next) {
 
 async function getQrCode(req, res, next) {
   try {
-    const data = await evolutionService.getQrCode();
+    // ?number=51910000000 -> codigo de vinculacion en vez de QR.
+    let number;
+    if (req.query.number !== undefined && String(req.query.number).trim() !== '') {
+      number = String(req.query.number).replace(/\D/g, '');
+      if (number.length < 8 || number.length > 15) {
+        return res
+          .status(400)
+          .json({ error: 'Numero invalido: usa solo digitos con codigo de pais (8 a 15 digitos)' });
+      }
+    }
+    const data = await evolutionService.getQrCode({ number });
     res.json(data);
   } catch (err) {
     next(err);

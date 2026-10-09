@@ -48,9 +48,14 @@
         </section>
 
         <section class="qr-section" id="qr-section">
-          <h2>Vincular WhatsApp</h2>
-          <p class="note">Si el estado de WhatsApp no es CONECTADO, genera el QR y escanealo desde la app de WhatsApp (Dispositivos vinculados).</p>
-          <button id="btn-qr" class="btn">Generar QR</button>
+          <h2>Conectar WhatsApp</h2>
+          <p class="note" id="wa-note">Escribe tu numero con codigo de pais y genera un codigo de 8 caracteres: en WhatsApp ve a Dispositivos vinculados &rarr; Vincular con el numero de telefono. Tambien puedes usar QR.</p>
+          <div class="btn-row">
+            <input id="wa-number" type="tel" inputmode="numeric" autocomplete="off" placeholder="Ej. 51910000000" style="padding:8px 10px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:inherit;min-width:200px" />
+            <button id="btn-pairing" class="btn">Generar codigo</button>
+            <button id="btn-qr" class="btn btn-secondary">Conectar con QR</button>
+            <button id="btn-disconnect" class="btn btn-secondary" hidden>Desconectar</button>
+          </div>
           <div id="qr-container"></div>
         </section>
 

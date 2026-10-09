@@ -1,311 +1,265 @@
+// Cliente de Evolution API (v2). Contrato que usan el resto de modulos:
+//   checkConnection()   -> { status: CONNECTED|CONNECTING|DISCONNECTED|ERROR, ... }  (nunca lanza)
+//   getConnectionState()-> respuesta cruda de /instance/connectionState
+//   createInstance()    -> crea la instancia (si ya existe, lo tolera)
+//   getQrCode(opts)     -> QR o codigo de vinculacion (si opts.number); crea la instancia si falta
+//   logoutInstance()    -> cierra la sesion de WhatsApp
+//   sendTextMessage()   -> { externalMessageId, raw }
+//   mapConnectionStatus(state)
+
 const axios = require('axios');
+const env = require('../config/env');
+const logger = require('../utils/logger');
 
-function normalizeBaseUrl(value) {
-  return String(value || '')
-    .trim()
-    .replace(/\/+$/, '');
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'];
+
+function instanceName() {
+  return String(env.EVOLUTION_INSTANCE || '').trim();
 }
 
-function extractErrorMessage(error) {
-  const data = error?.response?.data;
-
-  if (typeof data === 'string' && data.trim()) {
-    return data.trim();
-  }
-
-  if (Array.isArray(data?.message)) {
-    return data.message.join(', ');
-  }
-
-  if (typeof data?.message === 'string') {
-    return data.message;
-  }
-
-  if (typeof data?.error === 'string') {
-    return data.error;
-  }
-
-  return error?.message || 'Error desconocido en Evolution API';
+function isConfigured() {
+  return Boolean(env.EVOLUTION_API_URL && env.EVOLUTION_API_KEY && instanceName());
 }
 
-function normalizeQr(data) {
-  const root = data?.data ?? data?.response ?? data ?? {};
+function missingConfig() {
+  const missing = [];
+  if (!env.EVOLUTION_API_URL) missing.push('EVOLUTION_API_URL');
+  if (!env.EVOLUTION_API_KEY) missing.push('EVOLUTION_API_KEY');
+  if (!instanceName()) missing.push('EVOLUTION_INSTANCE');
+  return missing;
+}
 
-  const qrData =
-    root?.qrcode ??
-    root?.qrCode ??
-    {};
+// Cliente creado en cada llamada: asi siempre usa las variables vigentes y
+// nunca revienta al cargar el modulo si falta alguna.
+function client() {
+  return axios.create({
+    baseURL: String(env.EVOLUTION_API_URL || '').trim().replace(/\/+$/, ''),
+    timeout: 15000,
+    headers: { apikey: env.EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
+  });
+}
 
+function upstreamMessage(err) {
+  const data = err && err.response && err.response.data;
+  if (typeof data === 'string' && data.trim()) return data.trim().slice(0, 300);
+  if (data && Array.isArray(data.response && data.response.message)) return data.response.message.join(', ').slice(0, 300);
+  if (data && typeof data.message === 'string') return data.message.slice(0, 300);
+  if (data && data.response && typeof data.response.message === 'string') return data.response.message.slice(0, 300);
+  if (data && typeof data.error === 'string') return data.error.slice(0, 300);
+  return (err && err.message) || 'error desconocido';
+}
+
+function isInstanceMissing(err) {
+  const status = err && err.response && err.response.status;
+  if (status === 404) return true;
+  return status === 400 && /does not exist|no existe|not found/i.test(upstreamMessage(err));
+}
+
+// Error seguro para el navegador: NUNCA reenvia 401/403 de Evolution (el panel
+// los interpretaria como "sesion expirada" y cerraria la sesion del usuario).
+function serviceError(step, err) {
+  const upstream = err && err.response ? err.response.status : null;
+  const timeout = err && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT');
+  const out = new Error(
+    `Evolution API: fallo "${step}"${upstream ? ` (HTTP ${upstream})` : ''}: ${upstreamMessage(err)}`
+  );
+  out.status = timeout ? 504 : 502;
+  out.upstreamStatus = upstream;
+  return out;
+}
+
+function requireConfig() {
+  if (!isConfigured()) {
+    const e = new Error(`Evolution API sin configurar. Faltan variables: ${missingConfig().join(', ')}`);
+    e.status = 503;
+    throw e;
+  }
+}
+
+function mapConnectionStatus(state) {
+  switch (String(state || '').toLowerCase()) {
+    case 'open':
+      return 'CONNECTED';
+    case 'connecting':
+      return 'CONNECTING';
+    case 'close':
+    case 'closed':
+      return 'DISCONNECTED';
+    default:
+      return 'DISCONNECTED';
+  }
+}
+
+function extractState(data) {
+  const root = (data && (data.data || data.response)) || data || {};
+  return (root.instance && (root.instance.state || root.instance.status)) || root.state || root.status || null;
+}
+
+async function getConnectionState() {
+  requireConfig();
+  try {
+    const { data } = await client().get(`/instance/connectionState/${encodeURIComponent(instanceName())}`);
+    return data;
+  } catch (err) {
+    if (isInstanceMissing(err)) {
+      const e = new Error('La instancia de WhatsApp todavia no existe en Evolution API');
+      e.status = 404;
+      e.instanceMissing = true;
+      throw e;
+    }
+    throw serviceError('consultar estado', err);
+  }
+}
+
+// Estado para el panel. Nunca lanza: una instancia que aun no existe es
+// "DESCONECTADO" (hay que vincularla), no un error interno.
+async function checkConnection() {
+  if (!isConfigured()) {
+    return { status: 'ERROR', reason: `Faltan variables: ${missingConfig().join(', ')}` };
+  }
+  try {
+    const data = await getConnectionState();
+    const state = extractState(data);
+    return { status: mapConnectionStatus(state), state, instance: instanceName() };
+  } catch (err) {
+    if (err.instanceMissing) {
+      return { status: 'DISCONNECTED', state: 'not_created', instance: instanceName() };
+    }
+    logger.warn({ err: err.message }, 'No se pudo consultar el estado de WhatsApp');
+    return { status: 'ERROR', reason: err.message };
+  }
+}
+
+function webhookConfig() {
+  if (!env.WEBHOOK_URL) return undefined;
+  const cfg = {
+    enabled: true,
+    url: env.WEBHOOK_URL,
+    byEvents: false,
+    base64: false,
+    events: WEBHOOK_EVENTS,
+  };
+  if (env.WEBHOOK_SECRET) cfg.headers = { 'x-webhook-token': env.WEBHOOK_SECRET };
+  return cfg;
+}
+
+async function createInstance(extra = {}) {
+  requireConfig();
+  const body = {
+    instanceName: instanceName(),
+    integration: 'WHATSAPP-BAILEYS',
+    qrcode: true,
+    ...extra,
+  };
+  const webhook = webhookConfig();
+  if (webhook) body.webhook = webhook;
+  try {
+    const { data } = await client().post('/instance/create', body);
+    return data;
+  } catch (err) {
+    const status = err.response && err.response.status;
+    // 403/409 "ya existe": otro proceso la creo antes -> se tolera.
+    if ((status === 403 || status === 409) && /already|exist|in use|ya existe/i.test(upstreamMessage(err))) {
+      return { instance: { instanceName: instanceName(), status: 'already_exists' } };
+    }
+    throw serviceError('crear instancia', err);
+  }
+}
+
+function normalizeConnect(data) {
+  const root = (data && (data.data || data.response)) || data || {};
+  const qr = root.qrcode || root.qrCode || {};
   return {
-    base64:
-      qrData?.base64 ??
-      root?.base64 ??
-      null,
-
-    code:
-      qrData?.code ??
-      root?.code ??
-      null,
-
-    pairingCode:
-      qrData?.pairingCode ??
-      root?.pairingCode ??
-      null
+    base64: qr.base64 || root.base64 || null,
+    code: qr.code || root.code || null,
+    pairingCode: qr.pairingCode || root.pairingCode || null,
   };
 }
 
-function extractStatus(data) {
-  const root = data?.data ?? data?.response ?? data ?? {};
-
-  return (
-    root?.instance?.state ??
-    root?.instance?.status ??
-    root?.state ??
-    root?.status ??
-    null
-  );
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '');
 }
 
-class EvolutionService {
-  constructor() {
-    this.baseUrl = normalizeBaseUrl(process.env.EVOLUTION_API_URL);
-    this.apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
-    this.instance = String(process.env.EVOLUTION_INSTANCE || '').trim();
+// Obtiene el QR o, si se indica `number` (con codigo de pais), el codigo de
+// vinculacion de 8 caracteres. Si la instancia no existe, la crea y reintenta.
+async function getQrCode(options = {}) {
+  requireConfig();
+  const number = digitsOnly(options.number);
+  const params = number ? { number } : undefined;
+  const path = `/instance/connect/${encodeURIComponent(instanceName())}`;
 
-    if (!this.baseUrl) {
-      throw new Error('EVOLUTION_API_URL no esta configurado');
+  const connect = async () => {
+    const { data } = await client().get(path, { params });
+    return data;
+  };
+
+  let created = false;
+  let data;
+  try {
+    data = await connect();
+  } catch (err) {
+    if (!isInstanceMissing(err)) throw serviceError('obtener QR', err);
+    logger.info(`La instancia ${instanceName()} no existe en Evolution API: se crea automaticamente`);
+    await createInstance();
+    created = true;
+    try {
+      data = await connect();
+    } catch (err2) {
+      throw serviceError('obtener QR tras crear la instancia', err2);
     }
+  }
 
-    if (!this.apiKey) {
-      throw new Error('EVOLUTION_API_KEY no esta configurado');
-    }
+  const result = normalizeConnect(data);
+  const state = extractState(data);
+  return {
+    success: true,
+    instance: instanceName(),
+    created,
+    mode: number ? 'pairing' : 'qr',
+    status: state ? mapConnectionStatus(state) : 'CONNECTING',
+    base64: result.base64,
+    code: result.code,
+    pairingCode: result.pairingCode,
+    qrcode: result,
+    // Evolution a veces responde {count:0} mientras prepara la sesion.
+    pending: !result.base64 && !result.pairingCode && !result.code,
+  };
+}
 
-    if (!this.instance) {
-      throw new Error('EVOLUTION_INSTANCE no esta configurado');
-    }
+async function logoutInstance() {
+  requireConfig();
+  try {
+    const { data } = await client().delete(`/instance/logout/${encodeURIComponent(instanceName())}`);
+    return data;
+  } catch (err) {
+    if (isInstanceMissing(err)) return { status: 'SUCCESS', message: 'La instancia no existe; nada que cerrar' };
+    throw serviceError('cerrar sesion', err);
+  }
+}
 
-    this.client = axios.create({
-      baseURL: this.baseUrl,
-      timeout: 20000,
-      headers: {
-        apikey: this.apiKey,
-        'Content-Type': 'application/json'
-      }
+async function sendTextMessage(phone, text) {
+  requireConfig();
+  const number = digitsOnly(phone);
+  try {
+    const { data } = await client().post(`/message/sendText/${encodeURIComponent(instanceName())}`, {
+      number,
+      text,
     });
-  }
-
-  /**
-   * Genera/obtiene el QR de la instancia.
-   *
-   * Flujo:
-   * 1. Intenta GET /instance/connect/{instance}
-   * 2. Si la instancia no existe:
-   *    - POST /instance/create
-   *    - integration = WHATSAPP-BAILEYS
-   *    - qrcode = true
-   * 3. Si create devuelve el QR, lo retorna.
-   * 4. Si no devuelve QR, vuelve a GET /instance/connect/{instance}
-   */
-  async getQrCode() {
-    const encodedInstance = encodeURIComponent(this.instance);
-
-    // PRIMER INTENTO:
-    // Ruta correcta para Evolution API 2.3.7.
-    try {
-      const response = await this.client.get(
-        `/instance/connect/${encodedInstance}`
-      );
-
-      return this.buildQrResult(response.data, false);
-    } catch (error) {
-      const status = error?.response?.status;
-      const message = extractErrorMessage(error);
-
-      const instanceMissing =
-        status === 404 ||
-        (
-          status === 400 &&
-          /instance.*does not exist|does not exist.*instance|instancia.*no existe/i.test(
-            message
-          )
-        );
-
-      // No ocultar errores de autenticación, servidor,
-      // configuración o problemas de red.
-      if (!instanceMissing) {
-        throw this.createServiceError(
-          error,
-          'No se pudo solicitar el QR a Evolution API'
-        );
-      }
-    }
-
-    // SEGUNDO PASO:
-    // La instancia no existe → crearla automáticamente.
-    const createResult = await this.createInstance();
-
-    const directQr = normalizeQr(createResult);
-
-    // En Evolution API con qrcode=true,
-    // el QR puede venir directamente en la respuesta de creación.
-    if (
-      directQr.base64 ||
-      directQr.code ||
-      directQr.pairingCode
-    ) {
-      return {
-        success: true,
-        instance: this.instance,
-        created: true,
-        status: extractStatus(createResult) || 'connecting',
-        qrcode: directQr,
-        base64: directQr.base64,
-        code: directQr.code,
-        pairingCode: directQr.pairingCode
-      };
-    }
-
-    // TERCER PASO:
-    // Si la creación no devolvió QR, solicitarlo mediante connect.
-    try {
-      const response = await this.client.get(
-        `/instance/connect/${encodedInstance}`
-      );
-
-      return this.buildQrResult(response.data, true);
-    } catch (error) {
-      throw this.createServiceError(
-        error,
-        'La instancia fue creada, pero Evolution API no devolvio el QR'
-      );
-    }
-  }
-
-  /**
-   * Crea la instancia automáticamente.
-   */
-  async createInstance() {
-    try {
-      const response = await this.client.post(
-        '/instance/create',
-        {
-          instanceName: this.instance,
-          integration: 'WHATSAPP-BAILEYS',
-          qrcode: true
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      const status = error?.response?.status;
-      const message = extractErrorMessage(error);
-
-      // Otro proceso pudo haberla creado entre
-      // el primer GET y este POST.
-      if (
-        status === 409 ||
-        /already exists|ya existe|existe/i.test(message)
-      ) {
-        return {
-          instance: {
-            instanceName: this.instance,
-            status: 'already_exists'
-          }
-        };
-      }
-
-      throw this.createServiceError(
-        error,
-        'No se pudo crear la instancia en Evolution API'
-      );
-    }
-  }
-
-  /**
-   * Consulta el estado de la instancia.
-   */
-  async getInstanceStatus() {
-    const encodedInstance = encodeURIComponent(this.instance);
-
-    try {
-      const response = await this.client.get(
-        `/instance/connectionState/${encodedInstance}`
-      );
-
-      return {
-        success: true,
-        instance: this.instance,
-        status: extractStatus(response.data) || 'unknown',
-        data: response.data
-      };
-    } catch (error) {
-      throw this.createServiceError(
-        error,
-        'No se pudo consultar el estado de Evolution API'
-      );
-    }
-  }
-
-  /**
-   * Lista las instancias.
-   */
-  async fetchInstances() {
-    try {
-      const response = await this.client.get(
-        '/instance/fetchInstances'
-      );
-
-      return response.data;
-    } catch (error) {
-      throw this.createServiceError(
-        error,
-        'No se pudieron consultar las instancias de Evolution API'
-      );
-    }
-  }
-
-  /**
-   * Convierte la respuesta de Evolution
-   * en una respuesta estable para tu backend.
-   */
-  buildQrResult(data, created) {
-    const qr = normalizeQr(data);
-
     return {
-      success: true,
-      instance: this.instance,
-      created,
-      status:
-        extractStatus(data) ||
-        (qr.base64 ? 'connecting' : 'unknown'),
-
-      qrcode: qr,
-
-      // Compatibilidad con frontend existentes
-      base64: qr.base64,
-      code: qr.code,
-      pairingCode: qr.pairingCode
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
     };
-  }
-
-  /**
-   * Error controlado sin exponer credenciales.
-   */
-  createServiceError(error, fallbackMessage) {
-    const serviceError = new Error(fallbackMessage);
-
-    serviceError.status =
-      error?.response?.status || 502;
-
-    serviceError.code =
-      error?.code || 'EVOLUTION_API_ERROR';
-
-    serviceError.details =
-      extractErrorMessage(error);
-
-    return serviceError;
+  } catch (err) {
+    throw serviceError('enviar mensaje', err);
   }
 }
 
-module.exports = new EvolutionService();
-module.exports.EvolutionService = EvolutionService;
+module.exports = {
+  checkConnection,
+  getConnectionState,
+  createInstance,
+  getQrCode,
+  logoutInstance,
+  sendTextMessage,
+  mapConnectionStatus,
+};
