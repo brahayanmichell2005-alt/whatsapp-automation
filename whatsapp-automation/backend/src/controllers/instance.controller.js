@@ -68,4 +68,15 @@ async function logout(req, res, next) {
   }
 }
 
-module.exports = { getStatus, createInstance, getQrCode, logout };
+async function setWebhook(req, res, next) {
+  try {
+    // Si no hay WEBHOOK_URL en el entorno, se deduce del host desde el que se usa el panel.
+    const proto = (req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0];
+    const url = `${proto}://${req.get('host')}/api/webhooks/whatsapp`;
+    res.json(await evolutionService.setWebhook({ url }));
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getStatus, createInstance, getQrCode, logout, setWebhook };

@@ -11,7 +11,8 @@ const axios = require('axios');
 const env = require('../config/env');
 const logger = require('../utils/logger');
 
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'];
+// Eventos que el backend realmente procesa (ver evolutionEventParser).
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
 
 function instanceName() {
   return String(env.EVOLUTION_INSTANCE || '').trim();
@@ -226,6 +227,42 @@ async function getQrCode(options = {}) {
   };
 }
 
+// Registra (o actualiza) el webhook de la instancia YA existente para que
+// Evolution API envie los mensajes al backend. Idempotente.
+async function setWebhook(options = {}) {
+  requireConfig();
+  const url = env.WEBHOOK_URL || options.url;
+  if (!url) {
+    const e = new Error('Falta WEBHOOK_URL: no se sabe a que direccion enviar los mensajes');
+    e.status = 503;
+    throw e;
+  }
+  const cfg = { enabled: true, url, byEvents: false, base64: false, events: WEBHOOK_EVENTS };
+  if (env.WEBHOOK_SECRET) cfg.headers = { 'x-webhook-token': env.WEBHOOK_SECRET };
+  const path = `/webhook/set/${encodeURIComponent(instanceName())}`;
+  try {
+    await client().post(path, { webhook: cfg });
+  } catch (err) {
+    const status = err.response && err.response.status;
+    if (status !== 400 && status !== 422) throw serviceError('configurar webhook', err);
+    // Algunas versiones esperan el cuerpo sin el envoltorio "webhook".
+    try {
+      await client().post(path, cfg);
+    } catch (err2) {
+      throw serviceError('configurar webhook', err2);
+    }
+  }
+  let verified = null;
+  try {
+    const { data } = await client().get(`/webhook/find/${encodeURIComponent(instanceName())}`);
+    const w = (data && data.webhook) || data || {};
+    verified = Boolean(w.enabled && w.url === url);
+  } catch (e) {
+    /* la verificacion es informativa */
+  }
+  return { configured: true, verified, url, events: WEBHOOK_EVENTS, secretHeader: Boolean(env.WEBHOOK_SECRET) };
+}
+
 async function logoutInstance() {
   requireConfig();
   try {
@@ -260,6 +297,7 @@ module.exports = {
   createInstance,
   getQrCode,
   logoutInstance,
+  setWebhook,
   sendTextMessage,
   mapConnectionStatus,
 };

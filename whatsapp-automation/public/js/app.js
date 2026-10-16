@@ -115,6 +115,18 @@ async function fetchHealth() {
   }
 }
 
+// Una vez por sesion: se asegura de que Evolution API envie los mensajes al backend.
+let webhookEnsured = false;
+async function ensureWebhookOnce() {
+  if (webhookEnsured || !getAuthToken()) return;
+  webhookEnsured = true;
+  try {
+    await apiFetch('/api/instance/webhook', { method: 'POST' });
+  } catch (err) {
+    webhookEnsured = false; // se reintenta en el siguiente chequeo de estado
+  }
+}
+
 function updateWhatsappBadge(rawStatus) {
   const el = document.getElementById('status-whatsapp');
   if (!el) return;
@@ -124,6 +136,7 @@ function updateWhatsappBadge(rawStatus) {
   el.classList.add(rawStatus === 'CONNECTED' ? 'up' : 'down');
   const dc = document.getElementById('btn-disconnect');
   if (dc) dc.hidden = rawStatus !== 'CONNECTED';
+  if (rawStatus === 'CONNECTED') ensureWebhookOnce();
 }
 
 // PostgreSQL devuelve fechas ISO (2026-09-19T14:30:00.000Z): se muestran en hora local.
@@ -186,23 +199,12 @@ function startWaPolling() {
 }
 
 async function connectWhatsapp(mode) {
-  const btnPairing = document.getElementById('btn-pairing');
   const btnQr = document.getElementById('btn-qr');
-  const input = document.getElementById('wa-number');
   let path = '/api/instance/qrcode';
 
-  if (mode === 'pairing') {
-    const number = (input.value || '').replace(/\D/g, '');
-    if (number.length < 8 || number.length > 15) {
-      setWaMessage('Escribe tu numero con codigo de pais, solo digitos (ej. 51910000000).');
-      return;
-    }
-    path += `?number=${encodeURIComponent(number)}`;
-  }
-
-  btnPairing.disabled = true;
+  
   btnQr.disabled = true;
-  setWaMessage('Conectando con Evolution API...');
+  setWaMessage('Conectando...');
   updateWhatsappBadge('CONNECTING');
 
   try {
@@ -223,7 +225,7 @@ async function connectWhatsapp(mode) {
       const img = document.createElement('img');
       img.alt = 'Codigo QR de WhatsApp';
       img.src = data.base64.startsWith('data:') ? data.base64 : `data:image/png;base64,${data.base64}`;
-      setWaMessage('Escanea el QR desde WhatsApp > Dispositivos vinculados.', img);
+      setWaMessage('Escanea este QR desde WhatsApp > Dispositivos vinculados > Vincular un dispositivo.', img);
       startWaPolling();
     } else {
       setWaMessage('Evolution API aun esta preparando la sesion. Espera unos segundos y vuelve a pulsar el boton.');
@@ -232,7 +234,7 @@ async function connectWhatsapp(mode) {
     updateWhatsappBadge('ERROR');
     setWaMessage(`No se pudo conectar: ${err.message}`);
   } finally {
-    btnPairing.disabled = false;
+    
     btnQr.disabled = false;
   }
 }
@@ -249,7 +251,7 @@ async function disconnectWhatsapp() {
   fetchHealth();
 }
 
-document.getElementById('btn-pairing')?.addEventListener('click', () => connectWhatsapp('pairing'));
+
 document.getElementById('btn-qr')?.addEventListener('click', () => connectWhatsapp('qr'));
 document.getElementById('btn-disconnect')?.addEventListener('click', disconnectWhatsapp);
 

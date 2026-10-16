@@ -19,4 +19,7 @@ router.get('/qrcode', requireAuth, instanceController.getQrCode);
 // POST /api/instance/logout  -> cierra la sesion de WhatsApp vinculada
 router.post('/logout', requireAuth, instanceController.logout);
 
+// POST /api/instance/webhook  -> registra el webhook en Evolution API (recibir mensajes)
+router.post('/webhook', requireAuth, instanceController.setWebhook);
+
 module.exports = router;
