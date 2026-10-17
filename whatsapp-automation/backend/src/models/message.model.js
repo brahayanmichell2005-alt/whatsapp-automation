@@ -52,6 +52,15 @@ async function listByConversation(conversationId, { limit = 100, offset = 0 } = 
   return rows;
 }
 
+// Ultimos N mensajes de la conversacion, en orden cronologico (contexto para la IA).
+async function listRecentByConversation(conversationId, limit = 20) {
+  const { rows } = await pool.query(
+    'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2) t ORDER BY created_at ASC, id ASC',
+    [conversationId, limit]
+  );
+  return rows;
+}
+
 async function list({ limit = 50, offset = 0 } = {}) {
   const { rows } = await pool.query(
     'SELECT * FROM messages ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2',
@@ -61,6 +70,7 @@ async function list({ limit = 50, offset = 0 } = {}) {
 }
 
 module.exports = {
+  listRecentByConversation,
   findById,
   findByExternalId,
   create,

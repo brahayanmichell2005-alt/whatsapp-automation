@@ -122,7 +122,29 @@ async function processAutomatedReply({ customer, conversation, content }) {
 
   await customerModel.updateClassification(customer.id, classification);
 
-  const replyText = rulesService.generateReply(classification, customer.name);
+  // Respuesta conversacional con IA a partir del historial. Sin IA (o si falla)
+  // la plantilla se usa solo en el PRIMER contacto, nunca como respuesta a cada mensaje.
+  const history = (await messageModel.listRecentByConversation(conversation.id, 20)) || [];
+  let replyText = await aiService.generateReply({ customerName: customer.name, history });
+  let replySource = 'AI';
+  if (!replyText) {
+    const previousReplies = history.filter((m) => m.direction === 'OUTBOUND').length;
+    if (previousReplies > 0) {
+      await logModel.record({
+        eventType: 'auto_reply_skipped',
+        level: 'WARN',
+        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto`,
+        metadata: { customerId: customer.id, conversationId: conversation.id },
+      });
+      return;
+    }
+    replyText = rulesService.generateReply(classification, customer.name);
+    replySource = 'RULES';
+  }
+
+  // Varios mensajes seguidos = una sola respuesta: se descarta la respuesta aun
+  // pendiente (generada con menos contexto) y se encola la nueva con todo el historial.
+  await queueModel.cancelPendingByCustomer(customer.id);
 
   await queueModel.enqueue({
     customerId: customer.id,
@@ -133,7 +155,7 @@ async function processAutomatedReply({ customer, conversation, content }) {
   await logModel.record({
     eventType: 'auto_reply_queued',
     level: 'INFO',
-    message: `Respuesta automatica encolada para ${customer.phone} (clasificacion: ${classification.interestType}, origen: ${classification.source})`,
+    message: `Respuesta automatica encolada para ${customer.phone} (clasificacion: ${classification.interestType}, origen: ${replySource})`,
     metadata: { customerId: customer.id, conversationId: conversation.id, classification },
   });
 }
