@@ -39,7 +39,6 @@ async function chat(system, messages, maxTokens) {
   const timeout = 20000;
   switch (AI_PROVIDER) {
     case 'gemini': {
-      const model = encodeURIComponent(AI_MODEL || 'gemini-2.5-flash');
       const body = {
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         contents: messages.map((m) => ({
@@ -48,22 +47,29 @@ async function chat(system, messages, maxTokens) {
         })),
         generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
       };
-      // Claves "AQ." = Vertex AI (modo express); "AIza..." = Google AI Studio.
-      const vertex = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`;
-      const studio = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-      const urls = GEMINI_API_KEY.startsWith('AQ.') ? [vertex, studio] : [studio, vertex];
+      // Modelo principal + respaldos: si uno esta saturado (503/429) o ya no existe, se prueba el siguiente.
+      const models = [...new Set([AI_MODEL || 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])];
       let lastErr;
-      for (const url of urls) {
-        try {
-          const { data } = await axios.post(url, body, { headers: { 'x-goog-api-key': GEMINI_API_KEY }, timeout });
-          const parts = data?.candidates?.[0]?.content?.parts || [];
-          const text = parts.map((p) => p.text || '').join('').trim();
-          if (text) return text;
-          lastErr = new Error(`Gemini respondio sin texto (finishReason: ${data?.candidates?.[0]?.finishReason || 'desconocido'})`);
-        } catch (err) {
-          lastErr = err;
-          const st = err.response && err.response.status;
-          if (![400, 401, 403, 404].includes(st)) break;
+      for (const name of models) {
+        const model = encodeURIComponent(name);
+        // Claves "AQ." = Vertex AI (modo express); "AIza..." = Google AI Studio.
+        const vertex = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`;
+        const studio = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const urls = GEMINI_API_KEY.startsWith('AQ.') ? [vertex, studio] : [studio, vertex];
+        for (const url of urls) {
+          try {
+            const { data } = await axios.post(url, body, { headers: { 'x-goog-api-key': GEMINI_API_KEY }, timeout });
+            const parts = data?.candidates?.[0]?.content?.parts || [];
+            const text = parts.map((p) => p.text || '').join('').trim();
+            if (text) return text;
+            lastErr = new Error(`Gemini respondio sin texto (${name}, finishReason: ${data?.candidates?.[0]?.finishReason || 'desconocido'})`);
+            break;
+          } catch (err) {
+            lastErr = err;
+            const st = err.response && err.response.status;
+            if ([400, 401, 403].includes(st)) continue; // puede ser el otro endpoint
+            break; // 404 / 429 / 5xx / red: pasar al siguiente modelo
+          }
         }
       }
       throw lastErr;
