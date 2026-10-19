@@ -133,7 +133,7 @@ async function processAutomatedReply({ customer, conversation, content }) {
       await logModel.record({
         eventType: 'auto_reply_skipped',
         level: 'WARN',
-        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto`,
+        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto (${(aiService.getLastError && aiService.getLastError()) || 'sin detalle'})`,
         metadata: { customerId: customer.id, conversationId: conversation.id },
       });
       return;

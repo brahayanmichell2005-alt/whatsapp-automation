@@ -16,6 +16,20 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BOT_OWNER = process.env.BOT_OWNER || 'Michell';
 const BOT_PERSONA = process.env.BOT_PERSONA || '';
 
+let lastError = null;
+function describeError(err) {
+  const st = err && err.response && err.response.status;
+  const msg = (err && err.response && err.response.data && err.response.data.error && err.response.data.error.message) || (err && err.message) || 'error desconocido';
+  return `${AI_PROVIDER}${st ? ` HTTP ${st}` : ''}: ${String(msg)}`
+    .split(GEMINI_API_KEY || '\u0000').join('***')
+    .split(OPENAI_API_KEY || '\u0000').join('***')
+    .split(ANTHROPIC_API_KEY || '\u0000').join('***')
+    .slice(0, 300);
+}
+function getLastError() {
+  return lastError;
+}
+
 function isEnabled() {
   return AI_PROVIDER !== 'none' && AI_PROVIDER !== '';
 }
@@ -25,21 +39,34 @@ async function chat(system, messages, maxTokens) {
   const timeout = 20000;
   switch (AI_PROVIDER) {
     case 'gemini': {
-      const model = AI_MODEL || 'gemini-2.5-flash';
-      const { data } = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-        {
-          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-          contents: messages.map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: m.content }],
-          })),
-          generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
-        },
-        { headers: { 'x-goog-api-key': GEMINI_API_KEY }, timeout }
-      );
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      return parts.map((p) => p.text || '').join('').trim();
+      const model = encodeURIComponent(AI_MODEL || 'gemini-2.5-flash');
+      const body = {
+        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        contents: messages.map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+      };
+      // Claves "AQ." = Vertex AI (modo express); "AIza..." = Google AI Studio.
+      const vertex = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`;
+      const studio = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const urls = GEMINI_API_KEY.startsWith('AQ.') ? [vertex, studio] : [studio, vertex];
+      let lastErr;
+      for (const url of urls) {
+        try {
+          const { data } = await axios.post(url, body, { headers: { 'x-goog-api-key': GEMINI_API_KEY }, timeout });
+          const parts = data?.candidates?.[0]?.content?.parts || [];
+          const text = parts.map((p) => p.text || '').join('').trim();
+          if (text) return text;
+          lastErr = new Error(`Gemini respondio sin texto (finishReason: ${data?.candidates?.[0]?.finishReason || 'desconocido'})`);
+        } catch (err) {
+          lastErr = err;
+          const st = err.response && err.response.status;
+          if (![400, 401, 403, 404].includes(st)) break;
+        }
+      }
+      throw lastErr;
     }
     case 'openai': {
       const { data } = await axios.post(
@@ -145,11 +172,13 @@ async function generateReply({ customerName, history }) {
   try {
     const text = await chat(systemPrompt(customerName), turns, 300);
     const clean = String(text || '').replace(/\s+\n/g, '\n').trim().slice(0, 1000);
+    lastError = clean ? null : 'la IA devolvio un texto vacio';
     return clean || null;
   } catch (err) {
+    lastError = describeError(err);
     logger.error({ err: err.message, provider: AI_PROVIDER }, 'Fallo la generacion de respuesta por IA');
     return null;
   }
 }
 
-module.exports = { isEnabled, classifyIntent, generateReply, AI_PROVIDER };
+module.exports = { isEnabled, classifyIntent, generateReply, getLastError, AI_PROVIDER };
