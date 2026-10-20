@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-automation",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Wrapper del proyecto WhatsApp Automation para ejecutar la app desde la raíz del repositorio.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "install": "cd whatsapp-automation && npm install",
+    "start": "cd whatsapp-automation && npm start",
+    "dev": "cd whatsapp-automation && npm run dev",
+    "worker": "cd whatsapp-automation && npm run worker",
+    "panel": "cd whatsapp-automation && npm run panel",
+    "test": "cd whatsapp-automation && npm test",
+    "check": "cd whatsapp-automation && npm run check",
+    "smoke": "cd whatsapp-automation && npm run smoke",
+    "simulate:webhook": "cd whatsapp-automation && npm run simulate:webhook"
+  }
+}
