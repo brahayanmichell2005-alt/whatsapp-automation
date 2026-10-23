@@ -66,8 +66,8 @@ const env = {
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',
 
   // --- IA opcional (Seccion 23) ---
-  AI_PROVIDER: (process.env.AI_PROVIDER || 'none').toLowerCase(),
-  AI_MODEL: process.env.AI_MODEL || '',
+  AI_PROVIDER: (process.env.AI_PROVIDER || 'none').trim().toLowerCase(),
+  AI_MODEL: (process.env.AI_MODEL || '').trim(),
   OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://ollama:11434',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',

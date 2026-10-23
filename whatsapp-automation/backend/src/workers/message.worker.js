@@ -160,6 +160,13 @@ async function processOne(item, { deadline = null } = {}) {
         { err: bookErr.message, id: item.id },
         'Mensaje enviado, pero fallo el registro en la base de datos (no se reenviara)'
       );
+      // Reintento best-effort de markSent: si el fallo fue transitorio evita
+      // que el mensaje quede PROCESSING y se reenvie tras el requeue.
+      try {
+        await queueModel.markSent(item.id);
+      } catch (markErr) {
+        logger.error({ err: markErr.message, id: item.id }, 'No se pudo marcar como SENT tras el envio');
+      }
       try {
         await logModel.record({
           eventType: 'queue_send_bookkeeping_error',
@@ -216,7 +223,12 @@ async function processOne(item, { deadline = null } = {}) {
     await anomalyDetection.checkAfterFailure('queue_send_error');
     return outcome;
   } finally {
-    await rateLimiter.releaseConcurrencySlot();
+    // Un fallo liberando el cupo no debe convertir un envio exitoso en error.
+    try {
+      await rateLimiter.releaseConcurrencySlot();
+    } catch (releaseErr) {
+      logger.error({ err: releaseErr.message, id: item.id }, 'No se pudo liberar el cupo de concurrencia');
+    }
   }
 }
 

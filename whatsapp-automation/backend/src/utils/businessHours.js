@@ -8,7 +8,8 @@ function getCurrentTimeInTimezone(timezone, now = new Date()) {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
-      hour12: false,
+      // h23 garantiza 00:xx a medianoche (hour12:false puede devolver 24:xx).
+      hourCycle: 'h23',
       hour: '2-digit',
       minute: '2-digit',
     });

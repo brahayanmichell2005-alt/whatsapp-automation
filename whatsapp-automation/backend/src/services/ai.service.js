@@ -34,7 +34,21 @@ function getLastError() {
 }
 
 function isEnabled() {
-  return AI_PROVIDER !== 'none' && AI_PROVIDER !== '';
+  if (!AI_PROVIDER || AI_PROVIDER === 'none') return false;
+  // Un proveedor sin credenciales no esta realmente disponible: si lo
+  // trataramos como activo, el bot quedaria mudo tras el primer mensaje.
+  switch (AI_PROVIDER) {
+    case 'gemini':
+      return Boolean(GEMINI_API_KEY);
+    case 'openai':
+      return Boolean(OPENAI_API_KEY);
+    case 'anthropic':
+      return Boolean(ANTHROPIC_API_KEY);
+    case 'ollama':
+      return Boolean(OLLAMA_BASE_URL);
+    default:
+      return false;
+  }
 }
 
 // messages: [{ role: 'user' | 'assistant', content }]  (empieza y termina en 'user')

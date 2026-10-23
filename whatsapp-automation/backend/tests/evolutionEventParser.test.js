@@ -9,6 +9,7 @@ describe('evolutionEventParser', () => {
 
   test('extractPhoneFromJid extrae el numero sin el sufijo', () => {
     expect(parser.extractPhoneFromJid('51999000111@s.whatsapp.net')).toBe('51999000111');
+    expect(parser.extractPhoneFromJid('51999000111:12@s.whatsapp.net')).toBe('51999000111');
     expect(parser.extractPhoneFromJid(null)).toBeNull();
   });
 
@@ -63,6 +64,40 @@ describe('evolutionEventParser', () => {
       content: 'Hola, quiero informacion',
       timestamp: 1710000000,
     });
+  });
+
+  test('parseMessageUpsert usa remoteJidAlt cuando el principal es @lid', () => {
+    const result = parser.parseMessageUpsert({
+      data: {
+        key: {
+          remoteJid: '123456789@lid',
+          remoteJidAlt: '51999000111@s.whatsapp.net',
+          fromMe: false,
+          id: 'LID1',
+        },
+        message: { conversation: 'hola' },
+      },
+    });
+
+    expect(result.phone).toBe('51999000111');
+    expect(result.isGroup).toBe(false);
+  });
+
+  test('parseMessageUpsert no convierte un grupo en privado aunque traiga remoteJidAlt', () => {
+    const result = parser.parseMessageUpsert({
+      data: {
+        key: {
+          remoteJid: '120363000000000000@g.us',
+          remoteJidAlt: '51999000111@s.whatsapp.net',
+          fromMe: false,
+          id: 'GROUP1',
+        },
+        message: { conversation: 'hola grupo' },
+      },
+    });
+
+    expect(result.isGroup).toBe(true);
+    expect(result.phone).toBe('120363000000000000');
   });
 
   test('parseMessageUpsert devuelve null si no hay data', () => {

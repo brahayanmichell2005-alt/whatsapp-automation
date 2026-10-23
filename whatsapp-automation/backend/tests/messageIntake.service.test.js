@@ -38,6 +38,7 @@ beforeEach(() => {
   queueModel.enqueue.mockResolvedValue({ id: 200 });
   queueModel.cancelPendingByCustomer.mockResolvedValue();
   aiService.classifyIntent.mockResolvedValue(null); // fuerza fallback a reglas
+  aiService.isEnabled.mockReturnValue(false);
 });
 
 describe('messageIntake.service - handleInboundMessage', () => {
@@ -122,6 +123,47 @@ describe('messageIntake.service - handleInboundMessage', () => {
       phone: '51999000111',
       externalMessageId: 'MSG-3',
       content: 'Hola de nuevo',
+    });
+
+    expect(queueModel.enqueue).not.toHaveBeenCalled();
+  });
+
+  test('sin IA sigue respondiendo con reglas en mensajes posteriores', async () => {
+    messageModel.listRecentByConversation.mockResolvedValue([
+      { direction: 'INBOUND', content: 'Hola' },
+      { direction: 'OUTBOUND', content: 'Hola, gracias por escribirnos.' },
+      { direction: 'INBOUND', content: 'Cuanto cuesta la laptop?' },
+    ]);
+
+    await handleInboundMessage({
+      isGroup: false,
+      fromMe: false,
+      phone: '51999000111',
+      externalMessageId: 'MSG-4',
+      content: 'Cuanto cuesta la laptop?',
+    });
+
+    expect(aiService.generateReply).not.toHaveBeenCalled();
+    expect(queueModel.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ customerId: CUSTOMER.id, phone: CUSTOMER.phone })
+    );
+  });
+
+  test('si la IA esta activa pero falla, no repite la plantilla tras el primer contacto', async () => {
+    aiService.isEnabled.mockReturnValue(true);
+    aiService.generateReply.mockResolvedValue(null);
+    messageModel.listRecentByConversation.mockResolvedValue([
+      { direction: 'INBOUND', content: 'Hola' },
+      { direction: 'OUTBOUND', content: 'Respuesta anterior' },
+      { direction: 'INBOUND', content: 'Otra consulta' },
+    ]);
+
+    await handleInboundMessage({
+      isGroup: false,
+      fromMe: false,
+      phone: '51999000111',
+      externalMessageId: 'MSG-5',
+      content: 'Otra consulta',
     });
 
     expect(queueModel.enqueue).not.toHaveBeenCalled();

@@ -132,14 +132,19 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
 
   await customerModel.updateClassification(customer.id, classification);
 
-  // Respuesta conversacional con IA a partir del historial. Sin IA (o si falla)
-  // la plantilla se usa solo en el PRIMER contacto, nunca como respuesta a cada mensaje.
+  // Respuesta conversacional con IA a partir del historial. Si la IA esta
+  // desactivada (o mal configurada), el motor de reglas es el principal y debe
+  // responder siempre. Si la IA esta activa pero falla, la plantilla se usa
+  // solo en el PRIMER contacto para no repetirla en cada mensaje.
   const history = (await messageModel.listRecentByConversation(conversation.id, 20)) || [];
-  let replyText = await aiService.generateReply({ customerName: customer.name, history });
+  const aiEnabled = aiService.isEnabled();
+  let replyText = aiEnabled
+    ? await aiService.generateReply({ customerName: customer.name, history })
+    : null;
   let replySource = 'AI';
   if (!replyText) {
     const previousReplies = history.filter((m) => m.direction === 'OUTBOUND').length;
-    if (previousReplies > 0) {
+    if (aiEnabled && previousReplies > 0) {
       await logModel.record({
         eventType: 'auto_reply_skipped',
         level: 'WARN',

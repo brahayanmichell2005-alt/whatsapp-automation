@@ -74,9 +74,11 @@ async function incrementAttempt(id, errorMessage) {
   );
 }
 
+// Cancela las respuestas aun no enviadas de un cliente. Incluye PAUSED para
+// que un mensaje nuevo no deje una respuesta vieja esperando en la cola.
 async function cancelPendingByCustomer(customerId) {
   await pool.query(
-    "UPDATE message_queue SET status = 'CANCELLED' WHERE customer_id = $1 AND status = 'PENDING'",
+    "UPDATE message_queue SET status = 'CANCELLED' WHERE customer_id = $1 AND status IN ('PENDING', 'PAUSED')",
     [customerId]
   );
 }

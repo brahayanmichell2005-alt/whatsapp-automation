@@ -12,7 +12,9 @@ const logger = require('../utils/logger');
 
 const CHECK_INTERVAL_MS = parseInt(process.env.SCHEDULER_INTERVAL_MS, 10) || 30000;
 const LOCK_NAME = 'scheduled_messages_tick';
-const LOCK_TTL_SECONDS = 25;
+// Algo menor que el minuto del cron para que un tick lento no se solape con
+// el siguiente, pero suficiente para no vencer a mitad de proceso.
+const LOCK_TTL_SECONDS = 55;
 let intervalHandle = null;
 
 // Devuelve cuantos mensajes programados movio a la cola.

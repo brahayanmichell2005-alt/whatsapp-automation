@@ -59,9 +59,11 @@ function parseMessageUpsert(payload) {
   const altJid = entry.key?.remoteJidAlt;
   const isPhoneJid = (jid) =>
     typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us'));
+  const isLidJid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');
   // WhatsApp puede enviar un JID @lid (identificador interno) y el telefono
-  // real en remoteJidAlt. Se prefiere el telefono cuando esta disponible.
-  const remoteJid = !isPhoneJid(primaryJid) && isPhoneJid(altJid) ? altJid : primaryJid;
+  // real en remoteJidAlt. Solo se cambia cuando el principal es @lid: en un
+  // grupo el JID principal es @g.us y no debe tratarse como chat privado.
+  const remoteJid = isLidJid(primaryJid) && isPhoneJid(altJid) ? altJid : primaryJid;
   const fromMe = Boolean(entry.key?.fromMe);
   const externalMessageId = entry.key?.id || null;
   const message = entry.message || null;
