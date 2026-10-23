@@ -101,6 +101,22 @@ router.post('/repair', tempAuth, async (req, res, next) => {
   }
 });
 
+router.post('/ai-service-test', tempAuth, async (req, res) => {
+  const started = Date.now();
+  const reply = await aiService.generateReply({
+    customerName: 'Evelyn',
+    history: [{ direction: 'INBOUND', content: 'hola' }],
+  });
+  res.json({
+    ok: true,
+    provider: env.AI_PROVIDER,
+    model: env.AI_MODEL,
+    reply,
+    lastError: aiService.getLastError(),
+    tookMs: Date.now() - started,
+  });
+});
+
 router.post('/ai-test', tempAuth, async (req, res) => {
   const key = env.GEMINI_API_KEY;
   const keyKind = key.startsWith('AQ.')
