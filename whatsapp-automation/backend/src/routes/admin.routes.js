@@ -47,6 +47,35 @@ router.post('/migrate', tempAuth, async (req, res, next) => {
   }
 });
 
+router.post('/cleanup-test', tempAuth, async (req, res, next) => {
+  try {
+    await pool.query(
+      `DELETE FROM automation_logs
+        WHERE metadata->>'customerId' IN (
+          SELECT id::text FROM customers WHERE phone LIKE '000%'
+        )`
+    );
+    const deleted = await pool.query(`DELETE FROM customers WHERE phone LIKE '000%'`);
+    res.json({ ok: true, removed: deleted.rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/diag', tempAuth, async (req, res, next) => {
+  try {
+    const customers = await pool.query(
+      `SELECT id, phone, status FROM customers WHERE phone LIKE '000%' ORDER BY id DESC LIMIT 10`
+    );
+    const queue = await pool.query(
+      `SELECT id, customer_id, phone, status FROM message_queue WHERE phone LIKE '000%' ORDER BY id DESC LIMIT 10`
+    );
+    res.json({ ok: true, customers: customers.rows, queue: queue.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/selftest', tempAuth, async (req, res, next) => {
   const phone = `000${Date.now()}`;
   const externalMessageId = `selftest-${Date.now()}`;
