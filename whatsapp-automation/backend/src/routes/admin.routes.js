@@ -7,6 +7,7 @@ const { safeEqual } = require('../middleware/webhookAuth');
 const { pool } = require('../config/database');
 const env = require('../config/env');
 const messageWorker = require('../workers/message.worker');
+const evolutionService = require('../services/evolution.service');
 const businessHours = require('../utils/businessHours');
 
 const TEMP_TOKEN_HASH = 'e5014e3e3918933f6c1b65ef399ebc3632da5db0020f2742b5f45b451868ca46';
@@ -30,30 +31,46 @@ async function safeQuery(sql, params = []) {
 }
 
 router.get('/diagnose', tempAuth, async (req, res) => {
-  const [settings, counts, queue, cronJob, cronRuns, httpResponses, backendUrl, cronSecret] =
-    await Promise.all([
-      safeQuery(`SELECT "key", "value" FROM system_settings ORDER BY "key"`),
-      safeQuery(`SELECT status, count(*)::int AS count FROM message_queue GROUP BY status ORDER BY status`),
-      safeQuery(
-        `SELECT id, customer_id, phone, message, status, attempts, scheduled_at,
-                scheduled_message_id, error_message, created_at, updated_at
-           FROM message_queue ORDER BY id DESC LIMIT 20`
-      ),
-      safeQuery(
-        `SELECT jobid, schedule, active, jobname
-           FROM cron.job WHERE jobname = 'wa-worker-tick'`
-      ),
-      safeQuery(
-        `SELECT jobid, runid, status, return_message, start_time, end_time
-           FROM cron.job_run_details ORDER BY start_time DESC LIMIT 12`
-      ),
-      safeQuery(
-        `SELECT id, status_code, left(content, 400) AS content, error_msg, created
-           FROM net._http_response ORDER BY created DESC LIMIT 12`
-      ),
-      safeQuery(`SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'wa_backend_url'`),
-      safeQuery(`SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'wa_cron_secret'`),
-    ]);
+  const [
+    settings,
+    counts,
+    queue,
+    cronJob,
+    cronRuns,
+    httpResponses,
+    backendUrl,
+    cronSecret,
+    rateCounters,
+    workerLocks,
+    connection,
+    prefs4,
+  ] = await Promise.all([
+    safeQuery(`SELECT "key", "value" FROM system_settings ORDER BY "key"`),
+    safeQuery(`SELECT status, count(*)::int AS count FROM message_queue GROUP BY status ORDER BY status`),
+    safeQuery(
+      `SELECT id, customer_id, phone, message, status, attempts, scheduled_at,
+              scheduled_message_id, error_message, created_at, updated_at
+         FROM message_queue ORDER BY id DESC LIMIT 20`
+    ),
+    safeQuery(
+      `SELECT jobid, schedule, active, jobname
+         FROM cron.job WHERE jobname = 'wa-worker-tick'`
+    ),
+    safeQuery(
+      `SELECT jobid, runid, status, return_message, start_time, end_time
+         FROM cron.job_run_details ORDER BY start_time DESC LIMIT 12`
+    ),
+    safeQuery(
+      `SELECT id, status_code, left(content, 400) AS content, error_msg, created
+         FROM net._http_response ORDER BY created DESC LIMIT 12`
+    ),
+    safeQuery(`SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'wa_backend_url'`),
+    safeQuery(`SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'wa_cron_secret'`),
+    safeQuery(`SELECT counter_key, hits, expires_at FROM rate_counters ORDER BY counter_key`),
+    safeQuery(`SELECT name, expires_at FROM worker_locks ORDER BY name`),
+    evolutionService.checkConnection().catch((err) => ({ status: 'ERROR', reason: err.message })),
+    safeQuery(`SELECT * FROM communication_preferences WHERE customer_id = 4`),
+  ]);
 
   const vaultUrl = backendUrl.rows && backendUrl.rows[0] ? backendUrl.rows[0].decrypted_secret : null;
   const vaultSecret =
@@ -73,6 +90,10 @@ router.get('/diagnose', tempAuth, async (req, res) => {
     cronJob,
     cronRuns,
     httpResponses,
+    rateCounters,
+    workerLocks,
+    connection,
+    prefs4,
   });
 });
 
@@ -107,6 +128,24 @@ router.post('/resume', tempAuth, async (req, res, next) => {
        RETURNING "key", "value"`
     );
     res.json({ ok: true, settings: settings.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/reset-rate', tempAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(`DELETE FROM rate_counters WHERE counter_key LIKE 'rl:%'`);
+    res.json({ ok: true, removed: result.rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/tick', tempAuth, async (req, res, next) => {
+  try {
+    const worker = await messageWorker.tick({ budgetMs: 45000 });
+    res.json({ ok: true, worker });
   } catch (err) {
     next(err);
   }

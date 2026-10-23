@@ -259,21 +259,33 @@ async function tick({ budgetMs = null } = {}) {
       const batch = await queueModel.findNextBatch(env.MAX_CONCURRENT_SENDS || 5);
       if (batch.length === 0) break;
 
-      keepGoing = false;
+      let progressed = false;
       for (const item of batch) {
         if (stopping) break;
         // eslint-disable-next-line no-await-in-loop
         const outcome = await processOne(item, { deadline });
         summary.processed += 1;
-        if (outcome === 'sent') summary.sent += 1;
-        if (outcome === 'failed') summary.failed += 1;
+        if (outcome === 'sent') {
+          summary.sent += 1;
+          progressed = true;
+        }
+        if (outcome === 'failed') {
+          summary.failed += 1;
+          progressed = true;
+        }
 
-        // Solo se insiste si hubo avance real; con pausa, horario, limites o
-        // falta de tiempo no tiene sentido volver a consultar en bucle.
-        keepGoing = outcome === 'sent' || outcome === 'failed';
-        if (!keepGoing) break;
+        // 'retry' es un fallo de ESE mensaje: se sigue con el resto del lote
+        // para que un numero invalido no bloquee a los mensajes siguientes.
+        // 'skipped' / 'deferred' son condiciones globales: no insistir ahora
+        // (aunque ya se haya enviado algo antes en este mismo lote).
+        if (outcome === 'skipped' || outcome === 'deferred') {
+          progressed = false;
+          break;
+        }
       }
 
+      // Solo se vuelve a consultar la cola si hubo avance real.
+      keepGoing = progressed;
       if (!deadline) keepGoing = false; // modo local: una pasada por ciclo
     }
   } catch (err) {

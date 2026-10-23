@@ -73,6 +73,13 @@ function makeWorld(extra = {}) {
   inject('models/rateCounter.model.js', {
     increment: async (key) => { w.counters[key] = (w.counters[key] || 0) + 1; rec('increment'); return w.counters[key]; },
     acquire: async (key) => { w.counters[key] = (w.counters[key] || 0) + 1; rec('slotAcquire'); return w.counters[key]; },
+    acquireLimited: async (key, max) => {
+      const current = w.counters[key] || 0;
+      if (current >= max) return null;
+      w.counters[key] = current + 1;
+      rec('slotAcquire');
+      return w.counters[key];
+    },
     release: async (key) => { w.counters[key] = Math.max(0, (w.counters[key] || 0) - 1); rec('slotRelease'); },
     purgeExpired: async () => rec('purge'),
   });

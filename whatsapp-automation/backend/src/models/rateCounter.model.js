@@ -33,6 +33,24 @@ async function acquire(counterKey, ttlSeconds) {
   return rows[0].hits;
 }
 
+// Intenta tomar un cupo sin superar `maxHits`. Si el contador esta lleno,
+// devuelve null y NO renueva la expiracion: asi un contador que quedo
+// corrupto por un proceso muerto caduca solo y no bloquea la cola para siempre.
+async function acquireLimited(counterKey, maxHits, ttlSeconds) {
+  if (maxHits <= 0) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO rate_counters (counter_key, hits, expires_at)
+     VALUES ($1, 1, NOW() + make_interval(secs => $3::int))
+     ON CONFLICT (counter_key) DO UPDATE SET
+       hits = CASE WHEN rate_counters.expires_at < NOW() THEN 1 ELSE rate_counters.hits + 1 END,
+       expires_at = NOW() + make_interval(secs => $3::int)
+     WHERE rate_counters.expires_at < NOW() OR rate_counters.hits < $2
+     RETURNING hits`,
+    [counterKey, maxHits, ttlSeconds]
+  );
+  return rows[0] ? rows[0].hits : null;
+}
+
 async function release(counterKey) {
   await pool.query(
     'UPDATE rate_counters SET hits = GREATEST(hits - 1, 0) WHERE counter_key = $1',
@@ -48,4 +66,4 @@ async function purgeExpired() {
   return result.rowCount;
 }
 
-module.exports = { increment, acquire, release, purgeExpired };
+module.exports = { increment, acquire, acquireLimited, release, purgeExpired };

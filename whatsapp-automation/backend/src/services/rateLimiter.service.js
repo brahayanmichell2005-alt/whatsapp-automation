@@ -67,12 +67,14 @@ async function checkSendLimits() {
 const CONCURRENCY_KEY = 'rl:concurrent_sends';
 
 async function acquireConcurrencySlot() {
-  const current = await rateCounterModel.acquire(CONCURRENCY_KEY, 60); // se autolimpia si el proceso muere
-  if (current > env.MAX_CONCURRENT_SENDS) {
-    await rateCounterModel.release(CONCURRENCY_KEY);
-    return false;
-  }
-  return true;
+  // Toma el cupo solo si hay espacio. Si el contador esta lleno no lo
+  // incrementa ni renueva su TTL, para que pueda caducar y recuperarse.
+  const current = await rateCounterModel.acquireLimited(
+    CONCURRENCY_KEY,
+    env.MAX_CONCURRENT_SENDS,
+    60
+  );
+  return current !== null;
 }
 
 async function releaseConcurrencySlot() {

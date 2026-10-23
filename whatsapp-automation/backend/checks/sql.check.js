@@ -146,6 +146,7 @@ const CASES = {
   'models/rateCounter.model.js': {
     increment: [['rl:minute:2026-09-19T15:00', 120]],
     acquire: [['rl:concurrent_sends', 60]],
+    acquireLimited: [['rl:concurrent_sends', 2, 60]],
     release: [['rl:concurrent_sends']],
     purgeExpired: [[]],
   },
