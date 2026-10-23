@@ -243,7 +243,7 @@ async function generateReply({ customerName, history }) {
   const turns = toTurns(history);
   if (!turns.length || turns[turns.length - 1].role !== 'user') return null;
   try {
-    const text = await chat(systemPrompt(customerName), turns, 300);
+    const text = await chat(systemPrompt(customerName), turns, 1000);
     const clean = String(text || '').replace(/\s+\n/g, '\n').trim().slice(0, 1000);
     lastError = clean ? null : 'la IA devolvio un texto vacio';
     return clean || null;
