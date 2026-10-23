@@ -95,7 +95,6 @@ async function chat(system, messages, maxTokens) {
           AI_MODEL || 'gemini-3.8-flash',
           'gemini-3.6-flash',
           'gemini-3.5-flash-lite',
-          'gemini-3.1-flash-lite',
         ]),
       ];
       let lastErr;
@@ -109,6 +108,7 @@ async function chat(system, messages, maxTokens) {
           generation_config: {
             max_output_tokens: maxTokens,
             temperature: 0.7,
+            thinking_level: 'low',
           },
         };
         try {
