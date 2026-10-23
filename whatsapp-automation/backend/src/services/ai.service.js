@@ -64,56 +64,66 @@ async function chat(system, messages, maxTokens) {
   const timeoutFor = () => Math.max(2000, Math.min(20000, remaining()));
   switch (AI_PROVIDER) {
     case 'gemini': {
+      const model = AI_MODEL || 'gemini-3.8-flash';
+      // La Interactions API recibe el historial como texto (o como contenido
+      // multimodal). Para una sola instruccion se envia tal cual; para una
+      // conversacion se etiquetan los turnos para conservar el contexto.
+      const transcript =
+        messages.length === 1
+          ? String(messages[0].content || '')
+          : messages
+              .map(
+                (m) =>
+                  `${m.role === 'assistant' ? 'Asistente' : 'Cliente'}: ${String(
+                    m.content || ''
+                  ).trim()}`
+              )
+              .join('\n');
       const body = {
-        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        contents: messages.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        })),
-        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+        model,
+        input: transcript,
+        store: false,
+        ...(system ? { system_instruction: system } : {}),
+        generation_config: { max_output_tokens: maxTokens, temperature: 0.7 },
       };
-      // El modelo configurado es el unico que se intenta: los modelos viejos
-      // (2.0/2.5) ya no estan disponibles para cuentas nuevas y solo gastaban
-      // tiempo antes de caer al motor de reglas.
-      const models = [...new Set([AI_MODEL || 'gemini-3.8-flash'])];
+      // La documentacion usa v1beta y v1beta2 segun la fecha del ejemplo;
+      // se prueba la primera y, solo si responde 404, la segunda.
+      const endpoints = [
+        'https://generativelanguage.googleapis.com/v1beta/interactions',
+        'https://generativelanguage.googleapis.com/v1beta2/interactions',
+      ];
       let lastErr;
-      for (const name of models) {
+      for (const url of endpoints) {
         if (remaining() <= 1500) break;
-        const model = encodeURIComponent(name);
-        // Claves "AQ." = Vertex AI (modo express); "AIza..." = Google AI Studio.
-        // Vertex Express acepta la clave por query (?key=); tambien se prueba
-        // por cabecera porque distintas versiones del gateway lo manejan distinto.
-        const vertex = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`;
-        const studio = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        const attempts = GEMINI_API_KEY.startsWith('AQ.')
-          ? [
-              {
-                url: `${vertex}?key=${encodeURIComponent(GEMINI_API_KEY)}`,
-                headers: { 'x-goog-api-key': GEMINI_API_KEY },
-              },
-              { url: vertex, headers: { 'x-goog-api-key': GEMINI_API_KEY } },
-              { url: vertex, headers: { Authorization: `Bearer ${GEMINI_API_KEY}` } },
-            ]
-          : [{ url: studio, headers: { 'x-goog-api-key': GEMINI_API_KEY } }];
-
-        for (const attempt of attempts) {
-          if (remaining() <= 1500) break;
-          try {
-            const { data } = await axios.post(attempt.url, body, {
-              headers: attempt.headers,
-              timeout: Math.min(6000, timeoutFor()),
-            });
-            const parts = data?.candidates?.[0]?.content?.parts || [];
-            const text = parts.map((p) => p.text || '').join('').trim();
-            if (text) return text;
-            lastErr = new Error(`Gemini respondio sin texto (${name}, finishReason: ${data?.candidates?.[0]?.finishReason || 'desconocido'})`);
-            break;
-          } catch (err) {
-            lastErr = err;
-            if (remaining() <= 1500) break;
-            // 400/401/403/404/429 o timeout: probar la siguiente variante.
-            continue;
-          }
+        try {
+          const { data } = await axios.post(url, body, {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': GEMINI_API_KEY,
+            },
+            timeout: timeoutFor(),
+          });
+          const direct =
+            typeof data?.output_text === 'string' ? data.output_text.trim() : '';
+          const steps = Array.isArray(data?.steps) ? data.steps : [];
+          const fromSteps = steps
+            .filter((s) => s && s.type === 'model_output')
+            .flatMap((s) => (Array.isArray(s.content) ? s.content : []))
+            .filter((c) => c && c.type === 'text')
+            .map((c) => c.text || '')
+            .join('')
+            .trim();
+          const text = direct || fromSteps;
+          if (text) return text;
+          lastErr = new Error(
+            `Gemini respondio sin texto (${model}, status: ${data?.status || 'desconocido'})`
+          );
+        } catch (err) {
+          lastErr = err;
+          const st = err.response && err.response.status;
+          // 404: esta version del endpoint no existe; probar la otra.
+          if (st === 404) continue;
+          break;
         }
       }
       throw lastErr || new Error('La IA agoto el tiempo disponible');
