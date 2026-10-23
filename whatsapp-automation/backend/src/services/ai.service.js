@@ -19,6 +19,12 @@ const GEMINI_API_KEY = env.GEMINI_API_KEY;
 const BOT_OWNER = env.BOT_OWNER;
 const BOT_PERSONA = env.BOT_PERSONA;
 
+// Tiempo maximo total por intento de IA. Antes cada modelo/endpoint podia
+// esperar 20 s y el webhook terminaba superando el limite de Vercel, por lo
+// que algunos mensajes entrantes se perdian. Ahora se corta rapido y se cae
+// al motor de reglas.
+const CHAT_DEADLINE_MS = 12000;
+
 let lastError = null;
 function describeError(err) {
   const st = err && err.response && err.response.status;
@@ -53,7 +59,9 @@ function isEnabled() {
 
 // messages: [{ role: 'user' | 'assistant', content }]  (empieza y termina en 'user')
 async function chat(system, messages, maxTokens) {
-  const timeout = 20000;
+  const deadline = Date.now() + CHAT_DEADLINE_MS;
+  const remaining = () => deadline - Date.now();
+  const timeoutFor = () => Math.max(2000, Math.min(20000, remaining()));
   switch (AI_PROVIDER) {
     case 'gemini': {
       const body = {
@@ -69,14 +77,19 @@ async function chat(system, messages, maxTokens) {
       const models = [...new Set([AI_MODEL || 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'])];
       let lastErr;
       for (const name of models) {
+        if (remaining() <= 1500) break;
         const model = encodeURIComponent(name);
         // Claves "AQ." = Vertex AI (modo express); "AIza..." = Google AI Studio.
         const vertex = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`;
         const studio = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         const urls = GEMINI_API_KEY.startsWith('AQ.') ? [vertex, studio] : [studio, vertex];
         for (const url of urls) {
+          if (remaining() <= 1500) break;
           try {
-            const { data } = await axios.post(url, body, { headers: { 'x-goog-api-key': GEMINI_API_KEY }, timeout });
+            const { data } = await axios.post(url, body, {
+              headers: { 'x-goog-api-key': GEMINI_API_KEY },
+              timeout: timeoutFor(),
+            });
             const parts = data?.candidates?.[0]?.content?.parts || [];
             const text = parts.map((p) => p.text || '').join('').trim();
             if (text) return text;
@@ -84,13 +97,14 @@ async function chat(system, messages, maxTokens) {
             break;
           } catch (err) {
             lastErr = err;
+            if (remaining() <= 1500) break;
             const st = err.response && err.response.status;
             if ([400, 401, 403].includes(st)) continue; // puede ser el otro endpoint
             break; // 404 / 429 / 5xx / red: pasar al siguiente modelo
           }
         }
       }
-      throw lastErr;
+      throw lastErr || new Error('La IA agoto el tiempo disponible');
     }
     case 'openai': {
       const { data } = await axios.post(
@@ -101,7 +115,7 @@ async function chat(system, messages, maxTokens) {
           max_tokens: maxTokens,
           temperature: 0.7,
         },
-        { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }, timeout }
+        { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }, timeout: timeoutFor() }
       );
       return data?.choices?.[0]?.message?.content?.trim() || '';
     }
@@ -114,7 +128,7 @@ async function chat(system, messages, maxTokens) {
           ...(system ? { system } : {}),
           messages,
         },
-        { headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, timeout }
+        { headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, timeout: timeoutFor() }
       );
       return (data?.content || []).map((c) => c.text || '').join('').trim();
     }
@@ -126,7 +140,7 @@ async function chat(system, messages, maxTokens) {
           stream: false,
           messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages],
         },
-        { timeout }
+        { timeout: timeoutFor() }
       );
       return data?.message?.content?.trim() || '';
     }

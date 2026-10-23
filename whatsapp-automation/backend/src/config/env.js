@@ -41,6 +41,22 @@ if (isProd && JWT_SECRET === DEFAULT_JWT_SECRET) {
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 
+// En Vercel, si no se definio WEBHOOK_URL, se deriva el dominio estable de
+// produccion. Asi la instancia de Evolution puede registrar/renovar su webhook
+// sin depender de una variable manual (y sin usar la URL efimera del deploy).
+const vercelHost = String(
+  process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || ''
+)
+  .replace(/^https?:\/\//i, '')
+  .replace(/\/+$/, '')
+  .trim();
+const WEBHOOK_URL = (
+  process.env.WEBHOOK_URL ||
+  (vercelHost ? `https://${vercelHost}/api/webhooks/whatsapp` : '')
+)
+  .trim()
+  .replace(/\/+$/, '');
+
 const env = {
   NODE_ENV,
   PORT: toInt(process.env.PORT, 3000),
@@ -60,7 +76,7 @@ const env = {
   EVOLUTION_API_KEY: process.env.EVOLUTION_API_KEY || '',
   EVOLUTION_INSTANCE: (process.env.EVOLUTION_INSTANCE || '').trim(),
 
-  WEBHOOK_URL: process.env.WEBHOOK_URL || '',
+  WEBHOOK_URL,
   // Secreto compartido con Evolution API (cabecera x-webhook-token). Vacio = webhook abierto
   // en desarrollo; en produccion se rechaza (falla cerrado) para evitar mensajes falsos.
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',

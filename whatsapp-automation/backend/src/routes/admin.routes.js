@@ -1,5 +1,6 @@
 // Endpoint temporal de diagnostico del mensaje entrante. Se elimina al terminar.
 const crypto = require('crypto');
+const axios = require('axios');
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
@@ -80,6 +81,7 @@ router.get('/recent', tempAuth, async (req, res) => {
       provider: env.AI_PROVIDER,
       model: env.AI_MODEL,
       hasGeminiKey: Boolean(env.GEMINI_API_KEY),
+      lastError: aiService.getLastError(),
     },
     webhookUrl: env.WEBHOOK_URL || null,
     hasWebhookSecret: Boolean(env.WEBHOOK_SECRET),
@@ -88,11 +90,71 @@ router.get('/recent', tempAuth, async (req, res) => {
 
 router.post('/repair', tempAuth, async (req, res, next) => {
   try {
-    const result = await evolutionService.setWebhook();
-    res.json({ ok: true, result });
+    const targetUrl =
+      (req.body && req.body.url) ||
+      env.WEBHOOK_URL ||
+      'https://whatsapp-automation-peach.vercel.app/api/webhooks/whatsapp';
+    const result = await evolutionService.setWebhook({ url: targetUrl });
+    res.json({ ok: true, targetUrl, result });
   } catch (err) {
     next(err);
   }
+});
+
+router.post('/ai-test', tempAuth, async (req, res) => {
+  const key = env.GEMINI_API_KEY;
+  const keyKind = key.startsWith('AQ.')
+    ? 'vertex'
+    : key.startsWith('AIza')
+      ? 'studio'
+      : 'unknown';
+  const models = [
+    'gemini-3.8-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+  ];
+  const tests = models.map(async (model) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    try {
+      const { data } = await axios.post(
+        url,
+        {
+          contents: [{ role: 'user', parts: [{ text: 'Responde solo: hola' }] }],
+          generationConfig: { maxOutputTokens: 10 },
+        },
+        { headers: { 'x-goog-api-key': key }, timeout: 10000 }
+      );
+      const text = (data?.candidates?.[0]?.content?.parts || [])
+        .map((p) => p.text || '')
+        .join('')
+        .trim();
+      return {
+        model,
+        endpoint: 'studio',
+        ok: Boolean(text),
+        text,
+        finishReason: data?.candidates?.[0]?.finishReason || null,
+      };
+    } catch (err) {
+      return {
+        model,
+        endpoint: 'studio',
+        ok: false,
+        status: err.response?.status || null,
+        error: String(err.response?.data?.error?.message || err.message || 'error').slice(0, 300),
+      };
+    }
+  });
+  const results = await Promise.all(tests);
+  res.json({
+    ok: true,
+    provider: env.AI_PROVIDER,
+    configuredModel: env.AI_MODEL,
+    keyKind,
+    aiLastError: aiService.getLastError(),
+    results,
+  });
 });
 
 router.post('/reply-now', tempAuth, async (req, res, next) => {
