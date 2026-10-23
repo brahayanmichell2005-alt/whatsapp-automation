@@ -14,13 +14,43 @@ async function incrementWithLimit(key, limit, ttlSeconds) {
 
 // Comprueba (y consume) el cupo de envio por minuto/hora/dia. Devuelve
 // { allowed, reason } — si allowed=false, el worker debe esperar/reintentar.
-// Las claves usan el ISO de la fecha UTC (con separadores) para que ventanas
-// distintas nunca compartan clave.
+// Las claves usan la fecha/hora local de TIMEZONE (con separadores) para que
+// ventanas distintas nunca compartan clave.
+// Claves de ventana en la zona horaria configurada (TIMEZONE), para que el
+// limite diario no se reinicie a las 00:00 UTC sino a la medianoche local
+// (America/Lima por defecto). El formato conserva separadores para que sea
+// legible en la tabla rate_counters.
+function zonedWindowParts(date = new Date()) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: env.TIMEZONE,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const parts = Object.fromEntries(
+      formatter.formatToParts(date).map((p) => [p.type, p.value])
+    );
+    return {
+      minute: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`,
+      hour: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}`,
+      day: `${parts.year}-${parts.month}-${parts.day}`,
+    };
+  } catch (err) {
+    // Zona horaria invalida: se usa UTC para no bloquear los envios.
+    const iso = date.toISOString();
+    return { minute: iso.slice(0, 16), hour: iso.slice(0, 13), day: iso.slice(0, 10) };
+  }
+}
+
 async function checkSendLimits() {
-  const iso = new Date().toISOString(); // 2026-09-19T14:05:31.000Z
-  const minuteKey = `rl:minute:${iso.slice(0, 16)}`;
-  const hourKey = `rl:hour:${iso.slice(0, 13)}`;
-  const dayKey = `rl:day:${iso.slice(0, 10)}`;
+  const window = zonedWindowParts();
+  const minuteKey = `rl:minute:${window.minute}`;
+  const hourKey = `rl:hour:${window.hour}`;
+  const dayKey = `rl:day:${window.day}`;
 
   const minute = await incrementWithLimit(minuteKey, env.MAX_MESSAGES_PER_MINUTE, 120);
   if (!minute.allowed) return { allowed: false, reason: 'MAX_MESSAGES_PER_MINUTE' };

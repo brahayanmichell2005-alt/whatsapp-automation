@@ -37,6 +37,14 @@ async function update(req, res, next) {
       return res.status(400).json({ error: `status debe ser uno de: ${VALID_STATUSES.join(', ')}` });
     }
 
+    if (
+      req.body.assigned_to !== undefined
+      && req.body.assigned_to !== null
+      && !/^\d+$/.test(String(req.body.assigned_to))
+    ) {
+      return res.status(400).json({ error: 'assigned_to debe ser el id numerico de un usuario' });
+    }
+
     const updated = await conversationModel.updateStatus(
       req.params.id,
       req.body.status || existing.status,

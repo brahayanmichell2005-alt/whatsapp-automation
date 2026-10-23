@@ -17,6 +17,7 @@ const logger = require('../utils/logger');
 const queueModel = require('../models/messageQueue.model');
 const messageModel = require('../models/message.model');
 const conversationModel = require('../models/conversation.model');
+const scheduledModel = require('../models/scheduledMessage.model');
 const prefsModel = require('../models/communicationPreference.model');
 const logModel = require('../models/automationLog.model');
 const settingsModel = require('../models/systemSetting.model');
@@ -111,6 +112,9 @@ async function processOne(item, { deadline = null } = {}) {
     return 'skipped';
   }
 
+  let sent = false;
+  const scheduledId = item.scheduled_message_id || null;
+
   try {
     // 7. Conexion de WhatsApp
     const connection = await evolutionService.checkConnection();
@@ -125,35 +129,78 @@ async function processOne(item, { deadline = null } = {}) {
 
     // 8. Envio
     const result = await evolutionService.sendTextMessage(item.phone, item.message);
+    sent = true;
 
-    // 9. Registrar resultado
-    await queueModel.markSent(item.id);
-    await rateLimiter.recordSend();
+    // 9. Registrar resultado. Si falla el registro NO se devuelve el mensaje a
+    // PENDING: ya salio a WhatsApp y reintentarlo duplicaria el envio.
+    try {
+      await queueModel.markSent(item.id);
+      await rateLimiter.recordSend();
 
-    const conversation = await conversationModel.findOrCreateOpenByCustomer(item.customer_id);
-    await messageModel.create({
-      conversationId: conversation.id,
-      customerId: item.customer_id,
-      direction: 'OUTBOUND',
-      messageType: 'TEXT',
-      content: item.message,
-      externalMessageId: result.externalMessageId,
-      status: 'SENT',
-    });
-    await conversationModel.touchLastMessage(conversation.id);
+      const conversation = await conversationModel.findOrCreateOpenByCustomer(item.customer_id);
+      await messageModel.create({
+        conversationId: conversation.id,
+        customerId: item.customer_id,
+        direction: 'OUTBOUND',
+        messageType: 'TEXT',
+        content: item.message,
+        externalMessageId: result.externalMessageId,
+        status: 'SENT',
+      });
+      await conversationModel.touchLastMessage(conversation.id);
+      if (scheduledId) await scheduledModel.markSent(scheduledId);
 
-    await logModel.record({
-      eventType: 'queue_send',
-      level: 'INFO',
-      message: `Mensaje ${item.id} enviado a ${item.phone}`,
-    });
+      await logModel.record({
+        eventType: 'queue_send',
+        level: 'INFO',
+        message: `Mensaje ${item.id} enviado a ${item.phone}`,
+      });
+    } catch (bookErr) {
+      logger.error(
+        { err: bookErr.message, id: item.id },
+        'Mensaje enviado, pero fallo el registro en la base de datos (no se reenviara)'
+      );
+      try {
+        await logModel.record({
+          eventType: 'queue_send_bookkeeping_error',
+          level: 'ERROR',
+          message: `Mensaje ${item.id} enviado, pero no se pudo registrar: ${bookErr.message}`,
+        });
+      } catch (logErr) {
+        logger.error({ err: logErr.message }, 'Tampoco se pudo registrar el error de bookkeeping');
+      }
+    }
     return 'sent';
   } catch (err) {
     logger.error({ err: err.message, id: item.id }, 'Error enviando mensaje de la cola');
 
+    // El mensaje alcanzo a salir antes de fallar: nunca se reintenta.
+    if (sent) {
+      try {
+        await queueModel.markSent(item.id);
+      } catch (markErr) {
+        logger.error({ err: markErr.message, id: item.id }, 'No se pudo marcar como SENT');
+      }
+      if (scheduledId) {
+        try {
+          await scheduledModel.markSent(scheduledId);
+        } catch (markErr) {
+          logger.error({ err: markErr.message }, 'No se pudo marcar el programado como SENT');
+        }
+      }
+      return 'sent';
+    }
+
     let outcome = 'retry';
     if (item.attempts + 1 >= env.MAX_RETRIES) {
       await queueModel.markFailed(item.id, err.message);
+      if (scheduledId) {
+        try {
+          await scheduledModel.markFailed(scheduledId, err.message);
+        } catch (markErr) {
+          logger.error({ err: markErr.message }, 'No se pudo marcar el programado como FAILED');
+        }
+      }
       outcome = 'failed';
     } else {
       await queueModel.incrementAttempt(item.id, err.message);

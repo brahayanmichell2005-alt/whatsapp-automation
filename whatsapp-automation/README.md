@@ -27,6 +27,7 @@ public/                 Panel web estático
 backend/src/            Código del backend (rutas, controladores, modelos, servicios, worker)
 backend/checks/         Verificaciones que no necesitan base de datos (npm run check)
 backend/tests/          Pruebas Jest (npm test)
+chrome-extension/       Extensión de Chrome (CRM + respuesta automática en WhatsApp Web)
 database/schema.sql     Tablas para Supabase (ejecutar una vez)
 database/cron.sql       Programa el worker cada minuto en Supabase
 vercel.json             Configuración de Vercel
@@ -45,6 +46,8 @@ vercel.json             Configuración de Vercel
 
 ### 2. GitHub
 Sube esta carpeta a un repositorio. **No subas `.env`** (el `.gitignore` ya lo excluye).
+
+> Si el proyecto queda dentro de una subcarpeta del repositorio (por ejemplo `whatsapp-automation/`), en Vercel configura **Root Directory** con esa carpeta. Si no, Vercel no encontrará `api/` ni `vercel.json` y el deploy no tendrá backend.
 
 ### 3. Vercel (backend + panel)
 1. **Add New → Project** e importa el repositorio. Framework Preset: **Other**. Deja Build Command vacío.
@@ -82,7 +85,7 @@ En el plan gratuito de Vercel los Cron Jobs solo pueden ejecutarse **una vez al 
 En tu Evolution API, configura el webhook de la instancia:
 - **URL:** `https://TU-PROYECTO.vercel.app/api/webhooks/whatsapp`
 - **Eventos:** `MESSAGES_UPSERT`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`
-- **Cabecera:** `x-webhook-token: <tu WEBHOOK_SECRET>` (si tu versión no permite cabeceras personalizadas, el webhook queda protegido solo por no ser adivinable; en ese caso deja `WEBHOOK_SECRET` vacío).
+- **Cabecera:** `x-webhook-token: <tu WEBHOOK_SECRET>`. Es **obligatoria en producción**: si falta `WEBHOOK_SECRET`, el webhook responde `503` y no procesa eventos (falla cerrado).
 
 Luego, desde el panel, genera el QR y vincula WhatsApp.
 
@@ -107,9 +110,17 @@ npm run panel               # (otra terminal) panel en http://localhost:8080
 El panel detecta `:8080` y apunta a `http://localhost:3000` automáticamente.
 
 Verificaciones:
-- `npm run check` — 128 comprobaciones **sin base de datos ni instalar nada extra**: valida cada consulta SQL, el worker, los límites, la protección del cron y la conexión.
+- `npm run check` — 129 comprobaciones **sin base de datos ni instalar nada extra**: valida cada consulta SQL, el worker, los límites, la protección del cron y la conexión.
 - `npm test` — pruebas Jest (requieren `npm install`).
 - `npm run smoke` — ejercita los modelos contra tu base real (crea datos de prueba).
+
+### Extensión de Chrome (opcional)
+
+1. Abre `chrome://extensions`, activa **Modo de desarrollador** y pulsa **Cargar descomprimida**.
+2. Selecciona la carpeta `chrome-extension/`.
+3. En el popup de la extensión, indica la URL del backend y las credenciales del panel; el token se guarda en `chrome.storage.local`.
+
+> La extensión responde escribiendo directamente en WhatsApp Web (no usa Evolution API). No la uses al mismo tiempo que el worker de Evolution para el mismo número: el cliente podría recibir dos respuestas. Si la usas, mantén desactivada la automatización del backend o la respuesta automática de la extensión.
 
 ---
 
@@ -137,6 +148,7 @@ Consecuencia práctica: con intervalos de 10–30 s salen unos 2–3 mensajes po
 | `GET /api/automation/status` · `POST …/activate\|pause\|stop\|resume` | estado público, acciones con login | Interruptor global |
 | `GET /api/instance/status` · `POST /create` · `GET /qrcode` · `POST /logout` | estado público, resto con login | Instancia de WhatsApp |
 | `POST /api/webhooks/whatsapp` | `x-webhook-token` | Recibe eventos de Evolution API |
+| `POST /api/extension/reply` | login | Genera una respuesta para la extensión de Chrome |
 | `GET\|POST /api/cron/tick` | `Authorization: Bearer <CRON_SECRET>` | Ejecuta scheduler + worker |
 
 ## Variables de entorno
@@ -146,18 +158,20 @@ Consecuencia práctica: con intervalos de 10–30 s salen unos 2–3 mensajes po
 | `DATABASE_URL` | sí | Cadena Transaction pooler de Supabase |
 | `JWT_SECRET` | sí (producción) | Firma de sesiones del panel |
 | `CRON_SECRET` | sí | Protege `/api/cron/tick` (sin él responde 503) |
-| `WEBHOOK_SECRET` | recomendada | Protege el webhook (vacío = abierto) |
+| `WEBHOOK_SECRET` | sí (producción) | Protege el webhook; si falta en producción responde 503 (no queda abierto) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | sí | Administrador inicial (en producción no hay valores por defecto) |
 | `EVOLUTION_API_URL` / `_KEY` / `EVOLUTION_INSTANCE` | para enviar | Conexión con Evolution API |
 | `START_TIME`, `END_TIME`, `TIMEZONE` | no | Horario de atención (08:00–20:00, America/Lima) |
 | `MIN_DELAY_SECONDS`, `MAX_DELAY_SECONDS` | no | Intervalo entre envíos (10–30) |
 | `MAX_MESSAGES_PER_MINUTE/HOUR/DAY`, `MAX_CONCURRENT_SENDS`, `MAX_RETRIES` | no | Límites |
-| `AI_PROVIDER`, `AI_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | no | IA opcional (`ollama` requiere un servidor propio) |
+| `AI_PROVIDER`, `AI_MODEL`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | no | IA opcional (`ollama` requiere un servidor propio) |
 | `DB_POOL_MAX`, `DB_SSL`, `CRON_BUDGET_MS`, `CORS_ORIGIN`, `LOG_LEVEL` | no | Ajustes finos (ver `.env.example`) |
 
 ## Seguridad
 - Todas las tablas tienen **RLS activado sin políticas**: la API pública de Supabase (con la `anon key`) no puede leer ni escribir tus datos. Solo tu backend, conectado con el rol `postgres`, accede.
 - Las rutas que devuelven datos de clientes, conversaciones, mensajes o la cola **exigen login**.
+- El webhook exige `WEBHOOK_SECRET` en producción (falla cerrado) y el panel escapa los datos de WhatsApp antes de pintarlos (evita XSS almacenado).
+- `.env` se puede poner en la raíz del proyecto (recomendado) o en `backend/.env`.
 - Nunca subas `.env` a GitHub ni compartas `DATABASE_URL`. Si alguna credencial se expuso, cámbiala (Supabase → Settings → Database → Reset password; regenera los secretos en Vercel).
 - Usa `JWT_SECRET`, `CRON_SECRET` y `WEBHOOK_SECRET` largos y distintos entre sí.
 

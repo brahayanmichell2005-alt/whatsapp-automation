@@ -43,6 +43,12 @@ async function update(req, res, next) {
     }
 
     const scheduledAt = req.body.scheduled_at ? new Date(req.body.scheduled_at) : undefined;
+    if (scheduledAt && Number.isNaN(scheduledAt.getTime())) {
+      return res.status(400).json({ error: 'scheduled_at debe ser una fecha valida (ISO 8601)' });
+    }
+    if (req.body.message !== undefined && (typeof req.body.message !== 'string' || !req.body.message.trim())) {
+      return res.status(400).json({ error: 'message no puede estar vacio' });
+    }
     const updated = await scheduledModel.update(req.params.id, {
       message: req.body.message,
       scheduledAt,

@@ -5,16 +5,19 @@
 // quien encola el envio es messageIntake.service.js.
 
 const axios = require('axios');
+const env = require('../config/env');
 const logger = require('../utils/logger');
 
-const AI_PROVIDER = (process.env.AI_PROVIDER || 'none').toLowerCase();
-const AI_MODEL = process.env.AI_MODEL || '';
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://ollama:11434';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const BOT_OWNER = process.env.BOT_OWNER || 'Michell';
-const BOT_PERSONA = process.env.BOT_PERSONA || '';
+// Toda la configuracion se lee desde config/env.js (unico punto de verdad),
+// no directamente de process.env.
+const AI_PROVIDER = env.AI_PROVIDER;
+const AI_MODEL = env.AI_MODEL;
+const OLLAMA_BASE_URL = env.OLLAMA_BASE_URL;
+const OPENAI_API_KEY = env.OPENAI_API_KEY;
+const ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
+const GEMINI_API_KEY = env.GEMINI_API_KEY;
+const BOT_OWNER = env.BOT_OWNER;
+const BOT_PERSONA = env.BOT_PERSONA;
 
 let lastError = null;
 function describeError(err) {
@@ -48,7 +51,8 @@ async function chat(system, messages, maxTokens) {
         generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
       };
       // Modelo principal + respaldos: si uno esta saturado (503/429) o ya no existe, se prueba el siguiente.
-      const models = [...new Set([AI_MODEL || 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])];
+      // Nota: usa nombres que existan realmente en la API de Gemini; AI_MODEL manda si esta definido.
+      const models = [...new Set([AI_MODEL || 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'])];
       let lastErr;
       for (const name of models) {
         const model = encodeURIComponent(name);

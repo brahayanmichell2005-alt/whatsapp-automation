@@ -159,6 +159,14 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_messages (status);
 CREATE INDEX IF NOT EXISTS idx_scheduled_at ON scheduled_messages (scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_customer ON scheduled_messages (customer_id);
 
+-- Vinculo entre la cola y el mensaje programado que la origino. Se agrega
+-- despues de crear scheduled_messages para que la clave foranea exista.
+-- (ALTER ... IF NOT EXISTS permite re-ejecutar este archivo sin errores.)
+ALTER TABLE message_queue
+  ADD COLUMN IF NOT EXISTS scheduled_message_id INTEGER
+  REFERENCES scheduled_messages(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_queue_scheduled_msg ON message_queue (scheduled_message_id);
+
 -- ---------------------------------------------------------------------
 -- communication_preferences: opt-in / opt-out por cliente
 -- ---------------------------------------------------------------------

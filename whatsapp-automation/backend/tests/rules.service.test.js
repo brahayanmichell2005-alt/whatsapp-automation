@@ -51,4 +51,11 @@ describe('rules.service - detectOptCommand', () => {
   test('devuelve null para mensajes que no son comandos', () => {
     expect(rulesService.detectOptCommand('Hola, como estas?')).toBeNull();
   });
+
+  test('acepta los comandos estandar de WhatsApp (STOP / BAJA) y START / ALTA', () => {
+    expect(rulesService.detectOptCommand('STOP')).toBe('OPT_OUT');
+    expect(rulesService.detectOptCommand('baja.')).toBe('OPT_OUT');
+    expect(rulesService.detectOptCommand('START')).toBe('OPT_IN');
+    expect(rulesService.detectOptCommand('alta')).toBe('OPT_IN');
+  });
 });

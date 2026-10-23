@@ -24,6 +24,7 @@ const automationRoutes = require('./routes/automation.routes');
 const scheduleRoutes = require('./routes/schedule.routes');
 const authRoutes = require('./routes/auth.routes');
 const cronRoutes = require('./routes/cron.routes');
+const extensionRoutes = require('./routes/extension.routes');
 
 const app = express();
 
@@ -69,6 +70,7 @@ app.use('/api/automation', automationRoutes);
 app.use('/api/scheduled-messages', scheduleRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/cron', cronRoutes);
+app.use('/api/extension', extensionRoutes);
 
 // Nota: Si quieres que la raíz cargue el index.html en local en lugar del JSON, 
 // puedes descomentar la siguiente línea o dejar el endpoint de estado:

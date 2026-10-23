@@ -18,7 +18,8 @@ function isKnownEvent(eventName) {
 // remoteJid llega como "51999000111@s.whatsapp.net" o "...@g.us" para grupos.
 function extractPhoneFromJid(jid) {
   if (!jid) return null;
-  return jid.split('@')[0];
+  // Algunos payloads agregan el sufijo de dispositivo: "51999...:12@s.whatsapp.net"
+  return jid.split('@')[0].split(':')[0];
 }
 
 function isGroupJid(jid) {
@@ -54,7 +55,13 @@ function parseMessageUpsert(payload) {
   const entry = payload?.data;
   if (!entry) return null;
 
-  const remoteJid = entry.key?.remoteJid;
+  const primaryJid = entry.key?.remoteJid;
+  const altJid = entry.key?.remoteJidAlt;
+  const isPhoneJid = (jid) =>
+    typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us'));
+  // WhatsApp puede enviar un JID @lid (identificador interno) y el telefono
+  // real en remoteJidAlt. Se prefiere el telefono cuando esta disponible.
+  const remoteJid = !isPhoneJid(primaryJid) && isPhoneJid(altJid) ? altJid : primaryJid;
   const fromMe = Boolean(entry.key?.fromMe);
   const externalMessageId = entry.key?.id || null;
   const message = entry.message || null;

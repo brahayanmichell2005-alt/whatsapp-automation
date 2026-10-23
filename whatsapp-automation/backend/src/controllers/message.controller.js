@@ -10,6 +10,9 @@ async function list(req, res, next) {
     const offset = parseInt(req.query.offset, 10) || 0;
 
     if (req.query.conversation_id) {
+      if (!/^\d+$/.test(String(req.query.conversation_id))) {
+        return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+      }
       const messages = await messageModel.listByConversation(req.query.conversation_id, {
         limit,
         offset,

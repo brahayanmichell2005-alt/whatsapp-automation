@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <title>MiCierro CRM</title>
+</head>
+<body>
+  <main class="popup">
+    <div class="brand"><div class="brand-icon">M</div><div><strong>MiCierro</strong><span>CRM para WhatsApp</span></div><i></i></div>
+    <div class="hero"><div class="wa-mark">◉</div><div><strong>Tu espacio de trabajo</strong><p>CRM y respuestas en WhatsApp Web.</p></div></div>
+    <button id="connect-whatsapp" class="primary"><span>↗</span> Abrir WhatsApp Web</button>
+    <section class="api-setup">
+      <div class="section-title">Conectar motor de respuestas</div>
+      <label for="api-url">URL de tu backend</label>
+      <input id="api-url" type="url" value="http://localhost:3000" placeholder="https://tu-api.example.com">
+      <label for="email">Correo del panel</label>
+      <input id="email" type="email" autocomplete="username" placeholder="tu correo">
+      <label for="password">Contraseña</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="Contraseña del panel">
+      <button id="connect-api" class="secondary">Conectar API</button>
+      <div class="foot"><span class="dot"></span><span id="status">API sin conectar</span></div>
+    </section>
+    <p class="hint">La contraseña solo se usa para iniciar sesión; se guarda el token temporal. La primera vez, WhatsApp Web muestra su QR oficial.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

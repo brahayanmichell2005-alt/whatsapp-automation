@@ -53,10 +53,35 @@ function generateReply(classification, customerName) {
 }
 
 // Comandos de opt-in/opt-out reconocidos textualmente (Seccion 16).
+// Se aceptan las frases en espanol y los comandos estandar de WhatsApp
+// (STOP / BAJA para salir, START / ALTA para volver). La comparacion es
+// exacta sobre el mensaje completo, sin signos de puntuacion.
+const OPT_OUT_COMMANDS = new Set([
+  'dejar de recibir mensajes',
+  'no quiero recibir mensajes',
+  'no molestar',
+  'stop',
+  'baja',
+  'cancelar',
+  'salir',
+  'unsubscribe',
+]);
+
+const OPT_IN_COMMANDS = new Set([
+  'quiero recibir mensajes',
+  'start',
+  'alta',
+  'suscribirme',
+  'suscribir',
+]);
+
 function detectOptCommand(text) {
-  const normalized = normalize(text).trim();
-  if (normalized === 'quiero recibir mensajes') return 'OPT_IN';
-  if (normalized === 'dejar de recibir mensajes') return 'OPT_OUT';
+  const normalized = normalize(text)
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (OPT_OUT_COMMANDS.has(normalized)) return 'OPT_OUT';
+  if (OPT_IN_COMMANDS.has(normalized)) return 'OPT_IN';
   return null;
 }
 

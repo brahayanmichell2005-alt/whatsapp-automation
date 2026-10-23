@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "MiCierro CRM para WhatsApp Web",
+  "version": "1.1.1",
+  "description": "Herramientas CRM integradas en WhatsApp Web.",
+  "permissions": ["storage", "tabs"],
+  "optional_host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://whatsapp-automation-peach.vercel.app/*",
+    "https://*/*"
+  ],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "action": {
+    "default_title": "MiCierro CRM",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

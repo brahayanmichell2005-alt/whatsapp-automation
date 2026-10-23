@@ -9,6 +9,15 @@ const API_BASE = window.location.origin.includes(':8080')
 
 const TOKEN_STORAGE_KEY = 'wa_admin_token';
 
+// Escapa todo dato que venga de WhatsApp o de la base de datos antes de
+// pintarlo con innerHTML. Sin esto, el nombre de un cliente (pushName) o el
+// texto de un mensaje podrian inyectar HTML/JS en el panel (XSS almacenado).
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
 // Función para obtener siempre el token fresco del almacenamiento local
 function getAuthToken() {
   return localStorage.getItem(TOKEN_STORAGE_KEY) || null;
@@ -198,11 +207,9 @@ function startWaPolling() {
   }, 5000);
 }
 
-async function connectWhatsapp(mode) {
+async function connectWhatsapp() {
   const btnQr = document.getElementById('btn-qr');
-  let path = '/api/instance/qrcode';
-
-  
+  const path = '/api/instance/qrcode';
   btnQr.disabled = true;
   setWaMessage('Conectando...');
   updateWhatsappBadge('CONNECTING');
@@ -252,7 +259,7 @@ async function disconnectWhatsapp() {
 }
 
 
-document.getElementById('btn-qr')?.addEventListener('click', () => connectWhatsapp('qr'));
+document.getElementById('btn-qr')?.addEventListener('click', () => connectWhatsapp());
 document.getElementById('btn-disconnect')?.addEventListener('click', disconnectWhatsapp);
 
 // ---------------------------------------------------------------------
@@ -289,17 +296,17 @@ async function loadCustomers() {
     tbody.innerHTML = customers
       .map(
         (c) => `<tr>
-          <td>${c.id}</td>
-          <td>${c.phone}</td>
-          <td>${c.name || '-'}</td>
-          <td>${c.status}</td>
-          <td>${c.interest_type || '-'}</td>
-          <td>${fmtDate(c.last_message_at)}</td>
+          <td>${esc(c.id)}</td>
+          <td>${esc(c.phone)}</td>
+          <td>${esc(c.name || '-')}</td>
+          <td>${esc(c.status)}</td>
+          <td>${esc(c.interest_type || '-')}</td>
+          <td>${esc(fmtDate(c.last_message_at))}</td>
         </tr>`
       )
       .join('') || '<tr><td colspan="6">Sin clientes todavia.</td></tr>';
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6">Error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -314,12 +321,12 @@ async function loadConversations() {
     tbody.innerHTML = conversations
       .map(
         (c) => `<tr>
-          <td>${c.id}</td>
-          <td>${c.customer_id}</td>
-          <td>${c.status}</td>
-          <td>${fmtDate(c.last_message_at)}</td>
+          <td>${esc(c.id)}</td>
+          <td>${esc(c.customer_id)}</td>
+          <td>${esc(c.status)}</td>
+          <td>${esc(fmtDate(c.last_message_at))}</td>
           <td>
-            ${c.status !== 'CLOSED' ? `<button class="btn btn-secondary" data-close-conversation="${c.id}">Cerrar</button>` : '-'}
+            ${c.status !== 'CLOSED' ? `<button class="btn btn-secondary" data-close-conversation="${esc(c.id)}">Cerrar</button>` : '-'}
           </td>
         </tr>`
       )
@@ -339,7 +346,7 @@ async function loadConversations() {
       });
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -354,16 +361,16 @@ async function loadQueue() {
     tbody.innerHTML = items
       .map(
         (q) => `<tr>
-          <td>${q.id}</td>
-          <td>${q.phone}</td>
-          <td>${(q.message || '').slice(0, 60)}</td>
-          <td>${q.status}</td>
-          <td>${q.attempts}</td>
+          <td>${esc(q.id)}</td>
+          <td>${esc(q.phone)}</td>
+          <td>${esc((q.message || '').slice(0, 60))}</td>
+          <td>${esc(q.status)}</td>
+          <td>${esc(q.attempts)}</td>
         </tr>`
       )
       .join('') || '<tr><td colspan="5">Cola vacia.</td></tr>';
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -389,16 +396,16 @@ async function loadScheduled() {
     tbody.innerHTML = items
       .map(
         (s) => `<tr>
-          <td>${s.id}</td>
-          <td>${s.phone}</td>
-          <td>${(s.message || '').slice(0, 60)}</td>
-          <td>${fmtDate(s.scheduled_at)}</td>
-          <td>${s.status}</td>
+          <td>${esc(s.id)}</td>
+          <td>${esc(s.phone)}</td>
+          <td>${esc((s.message || '').slice(0, 60))}</td>
+          <td>${esc(fmtDate(s.scheduled_at))}</td>
+          <td>${esc(s.status)}</td>
         </tr>`
       )
       .join('') || '<tr><td colspan="5">Sin mensajes programados.</td></tr>';
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -413,15 +420,15 @@ async function loadLogs() {
     tbody.innerHTML = logs
       .map(
         (l) => `<tr>
-          <td>${fmtDate(l.created_at)}</td>
-          <td><span class="badge-inline" style="background:${l.level === 'ERROR' ? '#ef4444' : l.level === 'WARN' ? '#f59e0b' : '#334155'}">${l.level}</span></td>
-          <td>${l.event_type}</td>
-          <td>${l.message}</td>
+          <td>${esc(fmtDate(l.created_at))}</td>
+          <td><span class="badge-inline" style="background:${l.level === 'ERROR' ? '#ef4444' : l.level === 'WARN' ? '#f59e0b' : '#334155'}">${esc(l.level)}</span></td>
+          <td>${esc(l.event_type)}</td>
+          <td>${esc(l.message)}</td>
         </tr>`
       )
       .join('') || '<tr><td colspan="4">Sin registros todavia.</td></tr>';
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4">Error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 

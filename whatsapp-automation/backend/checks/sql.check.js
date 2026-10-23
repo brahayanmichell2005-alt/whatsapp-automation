@@ -92,6 +92,7 @@ const CASES = {
     create: [[{ conversationId: 1, customerId: 1, direction: 'INBOUND', content: 'hola', externalMessageId: 'X' }]],
     updateStatus: [[1, 'SENT'], [1, 'READ']],
     listByConversation: [[1, { limit: 10, offset: 0 }]],
+    listRecentByConversation: [[1, 20]],
     list: [[{ limit: 10, offset: 0 }]],
   },
   'models/messageQueue.model.js': {

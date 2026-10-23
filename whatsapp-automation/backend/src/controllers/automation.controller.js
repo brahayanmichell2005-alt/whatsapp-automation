@@ -3,6 +3,7 @@
 // la cola. STOPPED: detiene todos los envios automaticos.
 
 const settingsModel = require('../models/systemSetting.model');
+const queueModel = require('../models/messageQueue.model');
 const logModel = require('../models/automationLog.model');
 
 async function getStatus(req, res, next) {
@@ -16,6 +17,11 @@ async function getStatus(req, res, next) {
 }
 
 async function setStatus(status, logMessage) {
+  // Al reactivar, los mensajes pausados por "Pausar/Detener cola" vuelven a
+  // la cola: si no, quedarian atascados en PAUSED para siempre.
+  if (status === 'ACTIVE') {
+    await queueModel.resumeAllPaused();
+  }
   await settingsModel.set('automation_status', status);
   await settingsModel.set('pause_queue', status === 'ACTIVE' ? 'false' : 'true');
   await logModel.record({ eventType: 'automation_status_change', level: 'INFO', message: logMessage });

@@ -46,7 +46,7 @@ async function handleInboundMessage(parsedEvent) {
   }
 
   const customer = await customerModel.findOrCreateByPhone(phone, pushName);
-  await prefsModel.ensureForCustomer(customer.id);
+  const prefs = await prefsModel.ensureForCustomer(customer.id);
 
   const conversation = await conversationModel.findOrCreateOpenByCustomer(customer.id);
 
@@ -76,7 +76,7 @@ async function handleInboundMessage(parsedEvent) {
   });
 
   // ---- Seccion 6, pasos 11-13: reglas / IA y creacion de la respuesta ----
-  await processAutomatedReply({ customer, conversation, content });
+  await processAutomatedReply({ customer, conversation, content, prefs });
 
   return { skipped: false, customer, conversation, message };
 }
@@ -85,7 +85,7 @@ async function handleInboundMessage(parsedEvent) {
 // activada, con fallback al motor de reglas) y encola una respuesta
 // automatica, respetando el opt-out del cliente (Seccion 15-16, 23-24).
 // El envio real de lo encolado ocurre en el worker de la Entrega 6.
-async function processAutomatedReply({ customer, conversation, content }) {
+async function processAutomatedReply({ customer, conversation, content, prefs = null }) {
   const optCommand = rulesService.detectOptCommand(content);
   if (optCommand === 'OPT_OUT') {
     await prefsModel.optOut(customer.id);
@@ -109,9 +109,19 @@ async function processAutomatedReply({ customer, conversation, content }) {
     return;
   }
 
-  const prefs = await prefsModel.ensureForCustomer(customer.id);
-  if (prefs.opted_out) {
+  const currentPrefs = prefs || (await prefsModel.ensureForCustomer(customer.id));
+  if (currentPrefs.opted_out) {
     // No generamos ni encolamos respuestas comerciales a quien opto por salir.
+    return;
+  }
+
+  if (customer.status === 'BLOCKED' || customer.status === 'ARCHIVED') {
+    await logModel.record({
+      eventType: 'auto_reply_skipped',
+      level: 'INFO',
+      message: `Sin respuesta automatica para ${customer.phone}: cliente en estado ${customer.status}`,
+      metadata: { customerId: customer.id, conversationId: conversation.id },
+    });
     return;
   }
 

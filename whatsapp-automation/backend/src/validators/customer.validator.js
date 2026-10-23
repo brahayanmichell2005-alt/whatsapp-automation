@@ -2,6 +2,7 @@
 // de entrada). Reglas simples y explicitas, sin dependencias externas.
 
 const VALID_INTEREST_TYPES = ['PRODUCTO', 'SERVICIO', 'INDECISO'];
+const VALID_INTEREST_LEVELS = ['BAJO', 'MEDIO', 'ALTO'];
 const VALID_STATUSES = ['ACTIVE', 'BLOCKED', 'ARCHIVED'];
 
 function validateCreateCustomer(body) {
@@ -25,6 +26,9 @@ function validateUpdateCustomer(body) {
   }
   if (body?.interest_type && !VALID_INTEREST_TYPES.includes(body.interest_type)) {
     errors.push(`interest_type debe ser uno de: ${VALID_INTEREST_TYPES.join(', ')}`);
+  }
+  if (body?.interest_level && !VALID_INTEREST_LEVELS.includes(body.interest_level)) {
+    errors.push(`interest_level debe ser uno de: ${VALID_INTEREST_LEVELS.join(', ')}`);
   }
   return { valid: errors.length === 0, errors };
 }

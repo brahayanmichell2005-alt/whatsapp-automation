@@ -5,7 +5,14 @@
 // En Vercel las variables se definen en: Project -> Settings -> Environment
 // Variables. En local, en un archivo .env (ver .env.example).
 
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const path = require('path');
+
+// Se aceptan las dos ubicaciones para no romper instalaciones existentes:
+//   .env en la raiz del proyecto (lo que indican el README y .env.example)
+//   backend/.env (ubicacion que usaban versiones anteriores)
+// dotenv no sobrescribe variables ya definidas, asi que la raiz tiene prioridad.
+require('dotenv').config({ path: path.join(__dirname, '../../../.env') });
+require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 function toInt(value, fallback) {
   const n = parseInt(value, 10);
@@ -54,8 +61,19 @@ const env = {
   EVOLUTION_INSTANCE: (process.env.EVOLUTION_INSTANCE || '').trim(),
 
   WEBHOOK_URL: process.env.WEBHOOK_URL || '',
-  // Secreto compartido con Evolution API (cabecera x-webhook-token). Vacio = webhook abierto.
+  // Secreto compartido con Evolution API (cabecera x-webhook-token). Vacio = webhook abierto
+  // en desarrollo; en produccion se rechaza (falla cerrado) para evitar mensajes falsos.
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',
+
+  // --- IA opcional (Seccion 23) ---
+  AI_PROVIDER: (process.env.AI_PROVIDER || 'none').toLowerCase(),
+  AI_MODEL: process.env.AI_MODEL || '',
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://ollama:11434',
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  BOT_OWNER: process.env.BOT_OWNER || 'Michell',
+  BOT_PERSONA: process.env.BOT_PERSONA || '',
 
   // Secreto que debe presentar quien llame a /api/cron/tick (Supabase pg_cron o Vercel Cron).
   CRON_SECRET: process.env.CRON_SECRET || '',

@@ -9,14 +9,30 @@ async function findById(id) {
   return rows[0] || null;
 }
 
-async function enqueue({ customerId, phone, message, scheduledAt = null }) {
-  const { rows } = await pool.query(
-    `INSERT INTO message_queue (customer_id, phone, message, status, scheduled_at)
-     VALUES ($1, $2, $3, 'PENDING', $4)
-     RETURNING *`,
-    [customerId, phone, message, scheduledAt]
-  );
-  return rows[0];
+async function enqueue({ customerId, phone, message, scheduledAt = null, scheduledMessageId = null }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO message_queue (customer_id, phone, message, status, scheduled_at, scheduled_message_id)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5)
+       RETURNING *`,
+      [customerId, phone, message, scheduledAt, scheduledMessageId]
+    );
+    return rows[0];
+  } catch (err) {
+    // Compatibilidad durante el despliegue: si la migracion de
+    // `scheduled_message_id` todavia no se aplico, se guarda el mensaje sin
+    // ese vinculo en lugar de perderlo. Error 42703 = undefined_column.
+    if (err.code === '42703' && /scheduled_message_id/i.test(err.message || '')) {
+      const { rows } = await pool.query(
+        `INSERT INTO message_queue (customer_id, phone, message, status, scheduled_at)
+         VALUES ($1, $2, $3, 'PENDING', $4)
+         RETURNING *`,
+        [customerId, phone, message, scheduledAt]
+      );
+      return rows[0];
+    }
+    throw err;
+  }
 }
 
 // Trae el siguiente lote de mensajes listos para enviar (usado por el worker).

@@ -5,6 +5,7 @@
 // automation.controller.js).
 
 const queueModel = require('../models/messageQueue.model');
+const settingsModel = require('../models/systemSetting.model');
 const logModel = require('../models/automationLog.model');
 
 async function list(req, res, next) {
@@ -23,6 +24,9 @@ async function list(req, res, next) {
 // el interruptor global de automatizacion.
 async function pause(req, res, next) {
   try {
+    // El interruptor global detiene tambien los mensajes nuevos; si solo se
+    // marcan las filas PENDING, los webhooks que llegan despues se envian igual.
+    await settingsModel.set('pause_queue', 'true');
     const paused = await queueModel.pauseAllPending();
     await logModel.record({
       eventType: 'queue_pause',
@@ -38,6 +42,7 @@ async function pause(req, res, next) {
 async function resume(req, res, next) {
   try {
     const resumed = await queueModel.resumeAllPaused();
+    await settingsModel.set('pause_queue', 'false');
     await logModel.record({
       eventType: 'queue_resume',
       level: 'INFO',
@@ -51,6 +56,7 @@ async function resume(req, res, next) {
 
 async function stop(req, res, next) {
   try {
+    await settingsModel.set('pause_queue', 'true');
     const cancelled = await queueModel.cancelAllOpen();
     await logModel.record({
       eventType: 'queue_stop',
