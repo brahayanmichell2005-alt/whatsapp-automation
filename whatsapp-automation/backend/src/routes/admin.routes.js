@@ -82,6 +82,7 @@ router.get('/recent', tempAuth, async (req, res) => {
       model: env.AI_MODEL,
       hasGeminiKey: Boolean(env.GEMINI_API_KEY),
       lastError: aiService.getLastError(),
+      lastModel: aiService.getLastModel(),
     },
     webhookUrl: env.WEBHOOK_URL || null,
     hasWebhookSecret: Boolean(env.WEBHOOK_SECRET),
@@ -113,6 +114,7 @@ router.post('/ai-service-test', tempAuth, async (req, res) => {
     model: env.AI_MODEL,
     reply,
     lastError: aiService.getLastError(),
+    lastModel: aiService.getLastModel(),
     tookMs: Date.now() - started,
   });
 });
