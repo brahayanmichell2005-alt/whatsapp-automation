@@ -79,7 +79,7 @@ async function chat(system, messages, maxTokens) {
                   ).trim()}`
               )
               .join('\n');
-      const body = {
+      const interactionBody = {
         model,
         input: transcript,
         store: false,
@@ -90,44 +90,72 @@ async function chat(system, messages, maxTokens) {
           thinking_level: 'low',
         },
       };
-      // La documentacion usa v1beta y v1beta2 segun la fecha del ejemplo;
-      // se prueba la primera y, solo si responde 404, la segunda.
-      const endpoints = [
-        'https://generativelanguage.googleapis.com/v1beta/interactions',
-        'https://generativelanguage.googleapis.com/v1beta2/interactions',
+      const openaiBody = {
+        model,
+        messages: [
+          ...(system ? [{ role: 'system', content: system }] : []),
+          ...messages.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: String(m.content || ''),
+          })),
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.7,
+      };
+      // Gemini expone compatibilidad OpenAI y la Interactions API. Se prueban
+      // ambas porque segun el tipo de clave/region una puede no responder.
+      const attempts = [
+        {
+          kind: 'openai',
+          url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+          headers: { Authorization: `Bearer ${GEMINI_API_KEY}` },
+          body: openaiBody,
+        },
+        {
+          kind: 'interactions',
+          url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+          headers: { 'x-goog-api-key': GEMINI_API_KEY },
+          body: interactionBody,
+        },
+        {
+          kind: 'interactions',
+          url: 'https://generativelanguage.googleapis.com/v1beta2/interactions',
+          headers: { 'x-goog-api-key': GEMINI_API_KEY },
+          body: interactionBody,
+        },
       ];
       let lastErr;
-      for (const url of endpoints) {
+      for (const attempt of attempts) {
         if (remaining() <= 1500) break;
         try {
-          const { data } = await axios.post(url, body, {
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': GEMINI_API_KEY,
-            },
-            timeout: timeoutFor(),
+          const { data } = await axios.post(attempt.url, attempt.body, {
+            headers: { 'Content-Type': 'application/json', ...attempt.headers },
+            timeout: Math.min(12000, timeoutFor()),
           });
-          const direct =
-            typeof data?.output_text === 'string' ? data.output_text.trim() : '';
-          const steps = Array.isArray(data?.steps) ? data.steps : [];
-          const fromSteps = steps
-            .filter((s) => s && s.type === 'model_output')
-            .flatMap((s) => (Array.isArray(s.content) ? s.content : []))
-            .filter((c) => c && c.type === 'text')
-            .map((c) => c.text || '')
-            .join('')
-            .trim();
-          const text = direct || fromSteps;
+          const text =
+            attempt.kind === 'openai'
+              ? String(data?.choices?.[0]?.message?.content || '').trim()
+              : (() => {
+                  const direct =
+                    typeof data?.output_text === 'string' ? data.output_text.trim() : '';
+                  const steps = Array.isArray(data?.steps) ? data.steps : [];
+                  const fromSteps = steps
+                    .filter((s) => s && s.type === 'model_output')
+                    .flatMap((s) => (Array.isArray(s.content) ? s.content : []))
+                    .filter((c) => c && c.type === 'text')
+                    .map((c) => c.text || '')
+                    .join('')
+                    .trim();
+                  return direct || fromSteps;
+                })();
           if (text) return text;
           lastErr = new Error(
-            `Gemini respondio sin texto (${model}, status: ${data?.status || 'desconocido'})`
+            `Gemini respondio sin texto (${model}, endpoint: ${attempt.kind})`
           );
         } catch (err) {
           lastErr = err;
-          const st = err.response && err.response.status;
-          // 404: esta version del endpoint no existe; probar la otra.
-          if (st === 404) continue;
-          break;
+          if (remaining() <= 1500) break;
+          continue;
         }
       }
       throw lastErr || new Error('La IA agoto el tiempo disponible');

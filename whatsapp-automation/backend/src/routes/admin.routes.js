@@ -117,6 +117,108 @@ router.post('/ai-service-test', tempAuth, async (req, res) => {
   });
 });
 
+router.post('/ai-variants', tempAuth, async (req, res) => {
+  const key = env.GEMINI_API_KEY;
+  const model = env.AI_MODEL || 'gemini-3.8-flash';
+  const prompt = 'Responde solo: hola';
+  const clean = (value) =>
+    String(value || '')
+      .split(key)
+      .join('***')
+      .slice(0, 300);
+  const summarize = (data) => {
+    const direct = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (direct) return direct;
+    if (typeof data?.output_text === 'string') return data.output_text.trim();
+    const steps = Array.isArray(data?.steps) ? data.steps : [];
+    const fromSteps = steps
+      .filter((s) => s && s.type === 'model_output')
+      .flatMap((s) => (Array.isArray(s.content) ? s.content : []))
+      .filter((c) => c && c.type === 'text')
+      .map((c) => c.text || '')
+      .join('')
+      .trim();
+    if (fromSteps) return fromSteps;
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    return parts.map((p) => p.text || '').join('').trim();
+  };
+  const variants = [
+    {
+      name: 'openai-bearer',
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      headers: { Authorization: `Bearer ${key}` },
+      body: {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 20,
+      },
+    },
+    {
+      name: 'openai-header',
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      headers: { 'x-goog-api-key': key },
+      body: {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 20,
+      },
+    },
+    {
+      name: 'interactions-v1beta',
+      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+      headers: { 'x-goog-api-key': key },
+      body: { model, input: prompt, store: false },
+    },
+    {
+      name: 'interactions-v1beta2',
+      url: 'https://generativelanguage.googleapis.com/v1beta2/interactions',
+      headers: { 'x-goog-api-key': key },
+      body: { model, input: prompt, store: false },
+    },
+    {
+      name: 'interactions-query-key',
+      url: `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(key)}`,
+      headers: {},
+      body: { model, input: prompt, store: false },
+    },
+    {
+      name: 'generate-content',
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      headers: { 'x-goog-api-key': key },
+      body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+    },
+  ];
+  const results = await Promise.all(
+    variants.map(async (variant) => {
+      const started = Date.now();
+      try {
+        const { data } = await axios.post(variant.url, variant.body, {
+          headers: { 'Content-Type': 'application/json', ...variant.headers },
+          timeout: 15000,
+        });
+        const text = summarize(data);
+        return {
+          name: variant.name,
+          ok: Boolean(text),
+          ms: Date.now() - started,
+          text: text || null,
+          status: data?.status || null,
+          error: text ? null : 'respuesta sin texto',
+        };
+      } catch (err) {
+        return {
+          name: variant.name,
+          ok: false,
+          ms: Date.now() - started,
+          status: err.response?.status || null,
+          error: clean(err.response?.data?.error?.message || err.message),
+        };
+      }
+    })
+  );
+  res.json({ ok: true, model, keyKind: key.startsWith('AQ.') ? 'auth' : 'standard', results });
+});
+
 router.post('/ai-test', tempAuth, async (req, res) => {
   const key = env.GEMINI_API_KEY;
   const keyKind = key.startsWith('AQ.')
