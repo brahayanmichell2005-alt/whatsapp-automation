@@ -125,10 +125,11 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
     return;
   }
 
-  let classification = await aiService.classifyIntent(content);
-  if (!classification) {
-    classification = { ...rulesService.classify(content), source: 'RULES' };
-  }
+  // La clasificacion por IA agregaba otra llamada (y mas latencia) antes de
+  // redactar la respuesta. El motor de reglas ya distingue PRODUCTO /
+  // SERVICIO / INDECISO, asi que se usa directamente y la IA se reserva para
+  // la respuesta conversacional.
+  const classification = { ...rulesService.classify(content), source: 'RULES' };
 
   await customerModel.updateClassification(customer.id, classification);
 

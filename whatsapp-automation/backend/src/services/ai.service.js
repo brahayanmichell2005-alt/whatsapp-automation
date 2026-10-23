@@ -23,7 +23,7 @@ const BOT_PERSONA = env.BOT_PERSONA;
 // esperar 20 s y el webhook terminaba superando el limite de Vercel, por lo
 // que algunos mensajes entrantes se perdian. Ahora se corta rapido y se cae
 // al motor de reglas.
-const CHAT_DEADLINE_MS = 12000;
+const CHAT_DEADLINE_MS = 25000;
 
 let lastError = null;
 function describeError(err) {
@@ -84,7 +84,11 @@ async function chat(system, messages, maxTokens) {
         input: transcript,
         store: false,
         ...(system ? { system_instruction: system } : {}),
-        generation_config: { max_output_tokens: maxTokens, temperature: 0.7 },
+        generation_config: {
+          max_output_tokens: maxTokens,
+          temperature: 0.7,
+          thinking_level: 'low',
+        },
       };
       // La documentacion usa v1beta y v1beta2 segun la fecha del ejemplo;
       // se prueba la primera y, solo si responde 404, la segunda.
