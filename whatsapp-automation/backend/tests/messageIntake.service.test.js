@@ -17,6 +17,7 @@ const messageModel = require('../src/models/message.model');
 const prefsModel = require('../src/models/communicationPreference.model');
 const queueModel = require('../src/models/messageQueue.model');
 const aiService = require('../src/services/ai.service');
+const rulesService = require('../src/services/rules.service');
 const { handleInboundMessage } = require('../src/services/messageIntake.service');
 
 const CUSTOMER = { id: 1, phone: '51999000111', name: 'Cliente Prueba' };
@@ -149,12 +150,13 @@ describe('messageIntake.service - handleInboundMessage', () => {
     );
   });
 
-  test('si la IA esta activa pero falla, no repite la plantilla tras el primer contacto', async () => {
+  test('si la IA falla, no repite la misma plantilla ya enviada', async () => {
     aiService.isEnabled.mockReturnValue(true);
     aiService.generateReply.mockResolvedValue(null);
+    const template = rulesService.generateReply(rulesService.classify('Otra consulta'), CUSTOMER.name);
     messageModel.listRecentByConversation.mockResolvedValue([
       { direction: 'INBOUND', content: 'Hola' },
-      { direction: 'OUTBOUND', content: 'Respuesta anterior' },
+      { direction: 'OUTBOUND', content: template },
       { direction: 'INBOUND', content: 'Otra consulta' },
     ]);
 
@@ -167,5 +169,27 @@ describe('messageIntake.service - handleInboundMessage', () => {
     });
 
     expect(queueModel.enqueue).not.toHaveBeenCalled();
+  });
+
+  test('si la IA falla y la plantilla es distinta, responde con reglas', async () => {
+    aiService.isEnabled.mockReturnValue(true);
+    aiService.generateReply.mockResolvedValue(null);
+    messageModel.listRecentByConversation.mockResolvedValue([
+      { direction: 'INBOUND', content: 'Hola' },
+      { direction: 'OUTBOUND', content: 'Respuesta anterior' },
+      { direction: 'INBOUND', content: 'Cuanto cuesta la laptop?' },
+    ]);
+
+    await handleInboundMessage({
+      isGroup: false,
+      fromMe: false,
+      phone: '51999000111',
+      externalMessageId: 'MSG-6',
+      content: 'Cuanto cuesta la laptop?',
+    });
+
+    expect(queueModel.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ customerId: CUSTOMER.id, phone: CUSTOMER.phone })
+    );
   });
 });

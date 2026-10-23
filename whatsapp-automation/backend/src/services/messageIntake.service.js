@@ -133,27 +133,27 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   await customerModel.updateClassification(customer.id, classification);
 
   // Respuesta conversacional con IA a partir del historial. Si la IA esta
-  // desactivada (o mal configurada), el motor de reglas es el principal y debe
-  // responder siempre. Si la IA esta activa pero falla, la plantilla se usa
-  // solo en el PRIMER contacto para no repetirla en cada mensaje.
+  // desactivada (o falla), el motor de reglas responde igualmente: el bot no
+  // debe quedarse mudo. Solo se omite si la plantilla es identica a la ultima
+  // respuesta enviada, para no repetir el mismo texto en cada mensaje.
   const history = (await messageModel.listRecentByConversation(conversation.id, 20)) || [];
-  const aiEnabled = aiService.isEnabled();
-  let replyText = aiEnabled
+  let replyText = aiService.isEnabled()
     ? await aiService.generateReply({ customerName: customer.name, history })
     : null;
   let replySource = 'AI';
   if (!replyText) {
-    const previousReplies = history.filter((m) => m.direction === 'OUTBOUND').length;
-    if (aiEnabled && previousReplies > 0) {
+    const template = rulesService.generateReply(classification, customer.name);
+    const lastOutbound = [...history].reverse().find((m) => m.direction === 'OUTBOUND');
+    if (lastOutbound && String(lastOutbound.content || '').trim() === template.trim()) {
       await logModel.record({
         eventType: 'auto_reply_skipped',
         level: 'WARN',
-        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto (${(aiService.getLastError && aiService.getLastError()) || 'sin detalle'})`,
+        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto y la plantilla ya se habia enviado`,
         metadata: { customerId: customer.id, conversationId: conversation.id },
       });
       return;
     }
-    replyText = rulesService.generateReply(classification, customer.name);
+    replyText = template;
     replySource = 'RULES';
   }
 
