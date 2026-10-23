@@ -97,6 +97,21 @@ router.post('/send-one', tempAuth, async (req, res, next) => {
   }
 });
 
+router.post('/resume', tempAuth, async (req, res, next) => {
+  try {
+    const settings = await pool.query(
+      `INSERT INTO system_settings ("key", "value")
+       VALUES ('automation_status', 'ACTIVE'), ('pause_queue', 'false')
+       ON CONFLICT ("key") DO UPDATE
+         SET "value" = EXCLUDED."value", updated_at = NOW()
+       RETURNING "key", "value"`
+    );
+    res.json({ ok: true, settings: settings.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/fix-cron', tempAuth, async (req, res, next) => {
   try {
     const result = { secretUpdated: false, urlUpdated: false, job: null, error: null };
