@@ -222,6 +222,62 @@ router.post('/simulate', tempAuth, async (req, res, next) => {
   }
 });
 
+// Migracion temporal: guarda el JID completo para chats @lid.
+router.post('/migrate', tempAuth, async (req, res, next) => {
+  try {
+    await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS remote_jid VARCHAR(191)');
+    const result = await pool.query(
+      `UPDATE customers SET remote_jid = phone || '@lid'
+        WHERE remote_jid IS NULL AND length(phone) >= 14`
+    );
+    res.json({ ok: true, updated: result.rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/queue-cancel', tempAuth, async (req, res) => {
+  const id = Number((req.body && req.body.id) || 0);
+  if (!id) return res.status(400).json({ error: 'id requerido' });
+  const result = await pool.query(
+    "UPDATE message_queue SET status = 'CANCELLED' WHERE id = $1 AND status <> 'SENT'",
+    [id]
+  );
+  res.json({ ok: true, id, cancelled: result.rowCount });
+});
+
+router.post('/queue-requeue', tempAuth, async (req, res) => {
+  const id = Number((req.body && req.body.id) || 0);
+  if (!id) return res.status(400).json({ error: 'id requerido' });
+  const result = await pool.query(
+    `UPDATE message_queue
+        SET status = 'PENDING', attempts = 0, error_message = NULL
+      WHERE id = $1 AND status <> 'SENT'`,
+    [id]
+  );
+  res.json({ ok: true, id, requeued: result.rowCount });
+});
+
+router.post('/resume', tempAuth, async (req, res, next) => {
+  try {
+    await pool.query("UPDATE system_settings SET value = 'ACTIVE' WHERE \"key\" = 'automation_status'");
+    await pool.query("UPDATE system_settings SET value = 'false' WHERE \"key\" = 'pause_queue'");
+    const worker = await messageWorker.tick({ budgetMs: 45000 });
+    res.json({ ok: true, worker });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/tick', tempAuth, async (req, res, next) => {
+  try {
+    const worker = await messageWorker.tick({ budgetMs: 45000 });
+    res.json({ ok: true, worker });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Limpieza de datos de prueba (cliente, conversacion, mensajes y cola en cascada).
 router.post('/cleanup', tempAuth, async (req, res, next) => {
   try {
