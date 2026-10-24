@@ -1,11 +1,13 @@
 // Revision temporal de solo lectura. Se elimina al terminar.
 const crypto = require('crypto');
+const axios = require('axios');
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const env = require('../config/env');
 const aiService = require('../services/ai.service');
 const evolutionService = require('../services/evolution.service');
+const messageWorker = require('../workers/message.worker');
 const { safeEqual } = require('../middleware/webhookAuth');
 
 const TEMP_TOKEN_HASH = 'e5014e3e3918933f6c1b65ef399ebc3632da5db0020f2742b5f45b451868ca46';
@@ -139,6 +141,81 @@ router.post('/connect', tempAuth, async (req, res, next) => {
       base64: qr.base64,
       code: qr.code,
       pairingCode: qr.pairingCode,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Proxy temporal para inspeccionar la API de Evolution (chats/mensajes).
+router.post('/evolution', tempAuth, async (req, res) => {
+  const { method = 'GET', path, body } = req.body || {};
+  if (!path || !String(path).startsWith('/')) {
+    return res.status(400).json({ error: 'path requerido' });
+  }
+  try {
+    const r = await axios.request({
+      method,
+      baseURL: env.EVOLUTION_API_URL,
+      url: path,
+      data: body,
+      headers: { apikey: env.EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 20000,
+      validateStatus: () => true,
+    });
+    return res.status(200).json({ ok: r.status >= 200 && r.status < 300, status: r.status, data: r.data });
+  } catch (err) {
+    return res.status(200).json({
+      ok: false,
+      status: (err.response && err.response.status) || null,
+      error: String(err.message || 'error').slice(0, 300),
+    });
+  }
+});
+
+// Prueba de extremo a extremo: inyecta un mensaje entrante por el webhook real,
+// deja que la IA responda y procesa la cola de inmediato.
+router.post('/simulate', tempAuth, async (req, res, next) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '').replace(/\D/g, '');
+    const text = String((req.body && req.body.text) || 'Hola').slice(0, 500);
+    if (!phone) return res.status(400).json({ error: 'phone requerido' });
+    if (!env.WEBHOOK_URL) return res.status(503).json({ error: 'WEBHOOK_URL no configurado' });
+
+    const externalMessageId = `TEST-${Date.now()}`;
+    const payload = {
+      event: 'messages.upsert',
+      instance: env.EVOLUTION_INSTANCE,
+      data: {
+        key: {
+          id: externalMessageId,
+          remoteJid: `${phone}@s.whatsapp.net`,
+          fromMe: false,
+        },
+        pushName: 'Prueba',
+        message: { conversation: text },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    };
+
+    const started = Date.now();
+    const webhook = await axios.post(env.WEBHOOK_URL, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-webhook-token': env.WEBHOOK_SECRET,
+      },
+      timeout: 50000,
+    });
+    const worker = await messageWorker.tick({ budgetMs: 45000 });
+    res.json({
+      ok: true,
+      phone,
+      text,
+      externalMessageId,
+      webhookStatus: webhook.status,
+      webhook: webhook.data,
+      worker,
+      tookMs: Date.now() - started,
     });
   } catch (err) {
     next(err);
