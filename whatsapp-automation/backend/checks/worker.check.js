@@ -56,6 +56,12 @@ function makeWorld(extra = {}) {
       return 0;
     },
   });
+  inject('models/customer.model.js', {
+    findById: async (id) => {
+      rec('customerFind');
+      return { id, phone: '51999000111', remote_jid: null };
+    },
+  });
   inject('models/message.model.js', { create: async () => { rec('messageCreate'); return { id: 1 }; } });
   inject('models/conversation.model.js', {
     findOrCreateOpenByCustomer: async () => ({ id: 10 }),
