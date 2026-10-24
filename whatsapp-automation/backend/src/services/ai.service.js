@@ -88,13 +88,14 @@ async function chat(system, messages, maxTokens) {
       const url = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(
         GEMINI_API_KEY
       )}`;
-      // 3.8 puede estar saturado (503 high demand). Los modelos lite suelen
-      // responder cuando el principal no tiene capacidad.
+      // 3.8/3.6 pueden estar saturados (503 high demand) y consumen el
+      // presupuesto de tiempo antes de llegar al modelo que sí responde.
+      // Se intenta primero el lite, que es el más estable ahora mismo.
       const models = [
         ...new Set([
+          'gemini-3.5-flash-lite',
           AI_MODEL || 'gemini-3.8-flash',
           'gemini-3.6-flash',
-          'gemini-3.5-flash-lite',
         ]),
       ];
       let lastErr;

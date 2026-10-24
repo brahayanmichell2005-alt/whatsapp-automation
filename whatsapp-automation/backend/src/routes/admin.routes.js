@@ -222,4 +222,24 @@ router.post('/simulate', tempAuth, async (req, res, next) => {
   }
 });
 
+// Limpieza de datos de prueba (cliente, conversacion, mensajes y cola en cascada).
+router.post('/cleanup', tempAuth, async (req, res, next) => {
+  try {
+    const customerId = Number((req.body && req.body.customerId) || 0);
+    const queueId = Number((req.body && req.body.queueId) || 0);
+    if (!customerId) return res.status(400).json({ error: 'customerId requerido' });
+    const result = await pool.query('DELETE FROM customers WHERE id = $1', [customerId]);
+    const params = [String(customerId)];
+    let logSql = `DELETE FROM automation_logs WHERE metadata->>'customerId' = $1`;
+    if (queueId) {
+      params.push('queue_send_error', `Error enviando mensaje ${queueId}:%`);
+      logSql += ' OR (event_type = $2 AND message LIKE $3)';
+    }
+    await pool.query(logSql, params);
+    res.json({ ok: true, customerId, deleted: result.rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
