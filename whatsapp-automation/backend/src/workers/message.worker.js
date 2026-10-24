@@ -15,6 +15,7 @@
 const env = require('../config/env');
 const logger = require('../utils/logger');
 const queueModel = require('../models/messageQueue.model');
+const customerModel = require('../models/customer.model');
 const messageModel = require('../models/message.model');
 const conversationModel = require('../models/conversation.model');
 const scheduledModel = require('../models/scheduledMessage.model');
@@ -127,8 +128,11 @@ async function processOne(item, { deadline = null } = {}) {
 
     if (waitMs > 0) await sleep(waitMs);
 
-    // 8. Envio
-    const result = await evolutionService.sendTextMessage(item.phone, item.message);
+    // 8. Envio. Los chats @lid no tienen un telefono real: se usa el JID
+    // completo guardado en el cliente; el resto sigue enviando por telefono.
+    const customer = await customerModel.findById(item.customer_id);
+    const recipient = (customer && customer.remote_jid) || item.phone;
+    const result = await evolutionService.sendTextMessage(recipient, item.message);
     sent = true;
 
     // 9. Registrar resultado. Si falla el registro NO se devuelve el mensaje a

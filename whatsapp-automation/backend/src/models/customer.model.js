@@ -14,10 +14,10 @@ async function findById(id) {
   return rows[0] || null;
 }
 
-async function create({ phone, name = null, email = null }) {
+async function create({ phone, name = null, email = null, remoteJid = null }) {
   const { rows } = await pool.query(
-    'INSERT INTO customers (phone, name, email) VALUES ($1, $2, $3) RETURNING *',
-    [phone, name, email]
+    'INSERT INTO customers (phone, name, email, remote_jid) VALUES ($1, $2, $3, $4) RETURNING *',
+    [phone, name, email, remoteJid]
   );
   return rows[0];
 }
@@ -25,17 +25,36 @@ async function create({ phone, name = null, email = null }) {
 // Busca por telefono; si no existe, lo crea. Usado por el webhook para
 // "identificar o crear cliente". Si dos webhooks llegan a la vez para el mismo
 // telefono nuevo, ON CONFLICT evita el error de duplicado y se relee el cliente.
-async function findOrCreateByPhone(phone, name = null) {
+// `remoteJid` solo se usa para chats @lid sin telefono alternativo: es el unico
+// identificador al que Evolution API puede enviar la respuesta.
+async function findOrCreateByPhone(phone, name = null, remoteJid = null) {
   const existing = await findByPhone(phone);
-  if (existing) return existing;
+  if (existing) {
+    if (remoteJid && existing.remote_jid !== remoteJid) {
+      const { rows } = await pool.query(
+        'UPDATE customers SET remote_jid = $1 WHERE id = $2 RETURNING *',
+        [remoteJid, existing.id]
+      );
+      return rows[0] || existing;
+    }
+    return existing;
+  }
 
   const { rows } = await pool.query(
-    `INSERT INTO customers (phone, name) VALUES ($1, $2)
+    `INSERT INTO customers (phone, name, remote_jid) VALUES ($1, $2, $3)
      ON CONFLICT (phone) DO NOTHING
      RETURNING *`,
-    [phone, name]
+    [phone, name, remoteJid]
   );
-  return rows[0] || findByPhone(phone);
+  const created = rows[0] || (await findByPhone(phone));
+  if (created && remoteJid && created.remote_jid !== remoteJid) {
+    const { rows: updated } = await pool.query(
+      'UPDATE customers SET remote_jid = $1 WHERE id = $2 RETURNING *',
+      [remoteJid, created.id]
+    );
+    return updated[0] || created;
+  }
+  return created;
 }
 
 async function updateClassification(id, { interestType, interestLevel }) {

@@ -56,22 +56,32 @@ function parseMessageUpsert(payload) {
   if (!entry) return null;
 
   const primaryJid = entry.key?.remoteJid;
-  const altJid = entry.key?.remoteJidAlt;
   const isPhoneJid = (jid) =>
     typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us'));
   const isLidJid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');
   // WhatsApp puede enviar un JID @lid (identificador interno) y el telefono
-  // real en remoteJidAlt. Solo se cambia cuando el principal es @lid: en un
-  // grupo el JID principal es @g.us y no debe tratarse como chat privado.
-  const remoteJid = isLidJid(primaryJid) && isPhoneJid(altJid) ? altJid : primaryJid;
+  // real en remoteJidAlt. Cuando existe un telefono alternativo se responde
+  // por telefono; cuando no existe, hay que conservar el JID @lid completo
+  // para que Evolution API pueda entregar la respuesta.
+  const phoneJid = [
+    entry.key?.remoteJidAlt,
+    entry.remoteJidAlt,
+    entry.key?.senderPn,
+    entry.senderPn,
+  ].find(isPhoneJid);
+  const isLid = isLidJid(primaryJid);
+  const resolvedJid = isLid && phoneJid ? phoneJid : primaryJid;
   const fromMe = Boolean(entry.key?.fromMe);
   const externalMessageId = entry.key?.id || null;
   const message = entry.message || null;
 
   return {
     fromMe,
-    isGroup: isGroupJid(remoteJid),
-    phone: extractPhoneFromJid(remoteJid),
+    isGroup: isGroupJid(resolvedJid),
+    phone: extractPhoneFromJid(resolvedJid),
+    // Solo se guarda el JID completo cuando no hay telefono alternativo: en
+    // ese caso el numero visible es un LID y no sirve para enviar.
+    remoteJid: isLid && !phoneJid ? primaryJid : null,
     pushName: entry.pushName || null,
     externalMessageId,
     messageType: detectMessageType(message),

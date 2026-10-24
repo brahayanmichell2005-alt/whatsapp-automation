@@ -58,6 +58,7 @@ describe('evolutionEventParser', () => {
       fromMe: false,
       isGroup: false,
       phone: '51999000111',
+      remoteJid: null,
       pushName: 'Cliente Prueba',
       externalMessageId: 'ABC123',
       messageType: 'TEXT',
@@ -80,6 +81,25 @@ describe('evolutionEventParser', () => {
     });
 
     expect(result.phone).toBe('51999000111');
+    expect(result.remoteJid).toBeNull();
+    expect(result.isGroup).toBe(false);
+  });
+
+  test('parseMessageUpsert conserva el JID @lid cuando no hay telefono alternativo', () => {
+    const result = parser.parseMessageUpsert({
+      data: {
+        key: {
+          remoteJid: '50625601605844@lid',
+          fromMe: false,
+          id: 'LID2',
+        },
+        pushName: 'Dominik',
+        message: { conversation: 'Hola' },
+      },
+    });
+
+    expect(result.phone).toBe('50625601605844');
+    expect(result.remoteJid).toBe('50625601605844@lid');
     expect(result.isGroup).toBe(false);
   });
 

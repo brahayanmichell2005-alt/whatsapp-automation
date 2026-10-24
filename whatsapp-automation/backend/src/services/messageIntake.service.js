@@ -17,7 +17,7 @@ const aiService = require('./ai.service');
 const logger = require('../utils/logger');
 
 async function handleInboundMessage(parsedEvent) {
-  const { phone, pushName, externalMessageId, messageType, content, isGroup, fromMe } =
+  const { phone, pushName, externalMessageId, messageType, content, isGroup, fromMe, remoteJid } =
     parsedEvent;
 
   if (isGroup) {
@@ -45,7 +45,7 @@ async function handleInboundMessage(parsedEvent) {
     }
   }
 
-  const customer = await customerModel.findOrCreateByPhone(phone, pushName);
+  const customer = await customerModel.findOrCreateByPhone(phone, pushName, remoteJid || null);
   const prefs = await prefsModel.ensureForCustomer(customer.id);
 
   const conversation = await conversationModel.findOrCreateOpenByCustomer(customer.id);

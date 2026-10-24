@@ -86,7 +86,11 @@ describe('messageIntake.service - handleInboundMessage', () => {
     });
 
     expect(result.skipped).toBe(false);
-    expect(customerModel.findOrCreateByPhone).toHaveBeenCalledWith('51999000111', 'Cliente Prueba');
+    expect(customerModel.findOrCreateByPhone).toHaveBeenCalledWith(
+      '51999000111',
+      'Cliente Prueba',
+      null
+    );
     expect(conversationModel.findOrCreateOpenByCustomer).toHaveBeenCalledWith(CUSTOMER.id);
     expect(messageModel.create).toHaveBeenCalledWith(
       expect.objectContaining({ direction: 'INBOUND', customerId: CUSTOMER.id })
@@ -98,6 +102,25 @@ describe('messageIntake.service - handleInboundMessage', () => {
     );
     expect(queueModel.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ customerId: CUSTOMER.id, phone: CUSTOMER.phone })
+    );
+  });
+
+  test('pasa el JID @lid al cliente para poder responder por ese chat', async () => {
+    await handleInboundMessage({
+      isGroup: false,
+      fromMe: false,
+      phone: '50625601605844',
+      remoteJid: '50625601605844@lid',
+      pushName: 'Dominik',
+      externalMessageId: 'LID-MSG-1',
+      messageType: 'TEXT',
+      content: 'Hola',
+    });
+
+    expect(customerModel.findOrCreateByPhone).toHaveBeenCalledWith(
+      '50625601605844',
+      'Dominik',
+      '50625601605844@lid'
     );
   });
 

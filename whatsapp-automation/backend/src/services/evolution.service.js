@@ -276,7 +276,10 @@ async function logoutInstance() {
 
 async function sendTextMessage(phone, text) {
   requireConfig();
-  const number = digitsOnly(phone);
+  const raw = String(phone || '').trim();
+  // Evolution API acepta un JID completo para chats @lid; no hay que
+  // reducirlo a digitos porque entonces lo interpreta como un telefono.
+  const number = raw.includes('@') ? raw : digitsOnly(raw);
   try {
     const { data } = await client().post(`/message/sendText/${encodeURIComponent(instanceName())}`, {
       number,

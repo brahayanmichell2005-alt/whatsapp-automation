@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS customers (
   phone VARCHAR(32) NOT NULL,
   name VARCHAR(150),
   email VARCHAR(150),
+  -- JID completo para chats @lid sin telefono alternativo (Evolution API
+  -- necesita "123...@lid" para responder; el telefono visible es un LID).
+  remote_jid VARCHAR(191),
   status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'BLOCKED', 'ARCHIVED')),
   interest_type TEXT CHECK (interest_type IN ('PRODUCTO', 'SERVICIO', 'INDECISO')),
   interest_level TEXT CHECK (interest_level IN ('BAJO', 'MEDIO', 'ALTO')),
@@ -74,6 +77,8 @@ CREATE TABLE IF NOT EXISTS customers (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_customers_phone UNIQUE (phone)
 );
+-- Compatibilidad con bases creadas antes de agregar la columna remote_jid.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS remote_jid VARCHAR(191);
 CREATE INDEX IF NOT EXISTS idx_customers_status ON customers (status);
 CREATE INDEX IF NOT EXISTS idx_customers_interest ON customers (interest_type);
 
