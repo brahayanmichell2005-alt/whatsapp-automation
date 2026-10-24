@@ -5,6 +5,7 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const env = require('../config/env');
 const aiService = require('../services/ai.service');
+const evolutionService = require('../services/evolution.service');
 const { safeEqual } = require('../middleware/webhookAuth');
 
 const TEMP_TOKEN_HASH = 'e5014e3e3918933f6c1b65ef399ebc3632da5db0020f2742b5f45b451868ca46';
@@ -112,6 +113,27 @@ router.get('/recent', tempAuth, async (req, res) => {
     },
     webhookUrl: env.WEBHOOK_URL || null,
   });
+});
+
+router.get('/connection', tempAuth, async (req, res) => {
+  const state = await evolutionService.checkConnection();
+  res.json({ ok: true, state });
+});
+
+router.post('/connect', tempAuth, async (req, res, next) => {
+  try {
+    const qr = await evolutionService.getQrCode({});
+    res.json({
+      ok: true,
+      status: qr.status,
+      pending: qr.pending,
+      base64: qr.base64,
+      code: qr.code,
+      pairingCode: qr.pairingCode,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
