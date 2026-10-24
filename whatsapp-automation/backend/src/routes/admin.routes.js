@@ -120,6 +120,15 @@ router.get('/connection', tempAuth, async (req, res) => {
   res.json({ ok: true, state });
 });
 
+router.post('/repair', tempAuth, async (req, res, next) => {
+  try {
+    const result = await evolutionService.setWebhook();
+    res.json({ ok: true, targetUrl: env.WEBHOOK_URL || null, result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/connect', tempAuth, async (req, res, next) => {
   try {
     const qr = await evolutionService.getQrCode({});
