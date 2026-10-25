@@ -36,6 +36,13 @@ router.get('/config', async (req, res, next) => {
       has_api_key: Boolean(env.EVOLUTION_API_KEY),
       has_webhook_secret: Boolean(env.WEBHOOK_SECRET),
       webhook_url: env.WEBHOOK_URL || null,
+      ai_provider: env.AI_PROVIDER,
+      ai_model: env.AI_MODEL || null,
+      ai_enabled: Boolean(env.AI_PROVIDER && env.AI_PROVIDER !== 'none'),
+      has_gemini_key: Boolean(env.GEMINI_API_KEY),
+      start_time: env.START_TIME,
+      end_time: env.END_TIME,
+      timezone: env.TIMEZONE,
     });
   } catch (err) {
     next(err);
