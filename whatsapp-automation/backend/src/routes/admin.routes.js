@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const env = require('../config/env');
 const evolutionService = require('../services/evolution.service');
+const { pool } = require('../config/database');
 const { safeEqual } = require('../middleware/webhookAuth');
 
 const TEMP_TOKEN_HASH = 'e5014e3e3918933f6c1b65ef399ebc3632da5db0020f2742b5f45b451868ca46';
@@ -41,7 +42,32 @@ router.get('/diagnose', tempAuth, async (req, res) => {
     root: null,
     instances: null,
     state: null,
+    envKeys: [],
+    settings: [],
+    logs: [],
   };
+
+  result.envKeys = Object.keys(process.env).filter((key) =>
+    /EVOLUTION|RAILWAY|WHATSAPP/i.test(key)
+  );
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT "key", "value" FROM system_settings ORDER BY "key"'
+    );
+    result.settings = rows;
+  } catch (err) {
+    result.settings = [{ error: String(err.message || err) }];
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT created_at, event_type, level, message FROM automation_logs ORDER BY created_at DESC LIMIT 15'
+    );
+    result.logs = rows;
+  } catch (err) {
+    result.logs = [{ error: String(err.message || err) }];
+  }
 
   try {
     result.root = brief(
