@@ -19,6 +19,8 @@ router.get('/health', async (req, res) => {
     backend: 'UP',
     database: databaseOk ? 'UP' : 'DOWN',
     whatsapp: evolutionStatus.status,
+    whatsapp_reason: evolutionStatus.reason || null,
+    whatsapp_code: evolutionStatus.code || null,
     timestamp: new Date().toISOString(),
   };
 

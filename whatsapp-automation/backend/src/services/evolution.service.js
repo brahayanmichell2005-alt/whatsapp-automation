@@ -51,14 +51,46 @@ function upstreamMessage(err) {
 }
 
 function isInstanceMissing(err) {
+  if (isHostingFallback(err)) return false;
   const status = err && err.response && err.response.status;
   if (status === 404) return true;
   return status === 400 && /does not exist|no existe|not found/i.test(upstreamMessage(err));
 }
 
+// Railway (y otros proxys) responden 404 "Application not found" cuando el
+// servicio de Evolution API ya no existe o esta detenido. Eso NO significa que
+// falte la instancia: crear una instancia nueva contra ese host tampoco puede
+// funcionar. Se detecta para dar un error claro en vez de "fallo crear instancia".
+function isHostingFallback(err) {
+  const response = err && err.response;
+  if (!response || response.status !== 404) return false;
+  const headers = response.headers || {};
+  const fallbackHeader = headers['x-railway-fallback'];
+  return Boolean(fallbackHeader) || /application not found/i.test(upstreamMessage(err));
+}
+
+function evolutionHost() {
+  try {
+    return new URL(env.EVOLUTION_API_URL).host;
+  } catch (err) {
+    return 'la URL configurada';
+  }
+}
+
+
 // Error seguro para el navegador: NUNCA reenvia 401/403 de Evolution (el panel
 // los interpretaria como "sesion expirada" y cerraria la sesion del usuario).
 function serviceError(step, err) {
+  if (isHostingFallback(err)) {
+    const out = new Error(
+      `Evolution API no esta disponible en ${evolutionHost()}: el servicio de hosting responde 404 "Application not found". ` +
+        'Restaura o redeploya Evolution API (Railway/Render/VPS) y actualiza EVOLUTION_API_URL si cambia el dominio.'
+    );
+    out.status = 503;
+    out.code = 'EVOLUTION_UPSTREAM_DOWN';
+    out.upstreamStatus = 404;
+    return out;
+  }
   const upstream = err && err.response ? err.response.status : null;
   const timeout = err && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT');
   const out = new Error(
@@ -102,6 +134,7 @@ async function getConnectionState() {
     const { data } = await client().get(`/instance/connectionState/${encodeURIComponent(instanceName())}`);
     return data;
   } catch (err) {
+    if (isHostingFallback(err)) throw serviceError('consultar estado', err);
     if (isInstanceMissing(err)) {
       const e = new Error('La instancia de WhatsApp todavia no existe en Evolution API');
       e.status = 404;
@@ -127,7 +160,7 @@ async function checkConnection() {
       return { status: 'DISCONNECTED', state: 'not_created', instance: instanceName() };
     }
     logger.warn({ err: err.message }, 'No se pudo consultar el estado de WhatsApp');
-    return { status: 'ERROR', reason: err.message };
+    return { status: 'ERROR', reason: err.message, code: err.code || null };
   }
 }
 
@@ -199,6 +232,7 @@ async function getQrCode(options = {}) {
   try {
     data = await connect();
   } catch (err) {
+    if (isHostingFallback(err)) throw serviceError('obtener QR', err);
     if (!isInstanceMissing(err)) throw serviceError('obtener QR', err);
     logger.info(`La instancia ${instanceName()} no existe en Evolution API: se crea automaticamente`);
     await createInstance();
