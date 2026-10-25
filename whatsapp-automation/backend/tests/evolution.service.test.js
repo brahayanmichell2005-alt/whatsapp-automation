@@ -20,8 +20,10 @@ const fallbackError = {
 
 describe('evolution.service cuando el host de Evolution API no existe', () => {
   const originalEnv = process.env;
+  let createMock;
   let getMock;
   let postMock;
+  let dbQueryMock;
 
   beforeEach(() => {
     jest.resetModules();
@@ -33,14 +35,20 @@ describe('evolution.service cuando el host de Evolution API no existe', () => {
     };
     getMock = jest.fn().mockRejectedValue(fallbackError);
     postMock = jest.fn();
+    createMock = jest.fn(() => ({ get: getMock, post: postMock }));
+    dbQueryMock = jest.fn().mockResolvedValue({ rows: [] });
+    jest.doMock('../src/config/database', () => ({
+      pool: { query: dbQueryMock },
+    }));
     jest.doMock('axios', () => ({
-      create: jest.fn(() => ({ get: getMock, post: postMock })),
+      create: createMock,
     }));
   });
 
   afterEach(() => {
     process.env = originalEnv;
     jest.dontMock('axios');
+    jest.dontMock('../src/config/database');
   });
 
   test('checkConnection devuelve ERROR con un motivo claro y no "not_created"', async () => {
@@ -62,5 +70,17 @@ describe('evolution.service cuando el host de Evolution API no existe', () => {
       code: 'EVOLUTION_UPSTREAM_DOWN',
     });
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  test('usa evolution_api_url de system_settings en vez de la URL muerta', async () => {
+    dbQueryMock.mockResolvedValue({ rows: [{ value: 'https://nuevo-host.example.com' }] });
+    getMock.mockResolvedValue({ data: { instance: { state: 'open' } } });
+
+    const service = require('../src/services/evolution.service');
+    const result = await service.checkConnection();
+
+    expect(result.status).toBe('CONNECTED');
+    expect(createMock).toHaveBeenCalled();
+    expect(createMock.mock.calls[0][0].baseURL).toBe('https://nuevo-host.example.com');
   });
 });

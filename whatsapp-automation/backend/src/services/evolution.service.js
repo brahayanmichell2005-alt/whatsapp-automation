@@ -10,31 +10,69 @@
 const axios = require('axios');
 const env = require('../config/env');
 const logger = require('../utils/logger');
+const { pool } = require('../config/database');
 
 // Eventos que el backend realmente procesa (ver evolutionEventParser).
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+
+// La URL de Evolution API se puede cambiar sin tocar Vercel: si existe la
+// clave evolution_api_url en system_settings, tiene prioridad sobre
+// EVOLUTION_API_URL. Asi se puede migrar de host (Railway -> VPS) desde el
+// propio backend. La cache evita consultar la DB en cada mensaje.
+const URL_CACHE_MS = 30000;
+let cachedBaseUrl = null;
+let cachedBaseUrlAt = 0;
 
 function instanceName() {
   return String(env.EVOLUTION_INSTANCE || '').trim();
 }
 
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+async function getBaseUrl() {
+  if (cachedBaseUrl !== null && Date.now() - cachedBaseUrlAt < URL_CACHE_MS) {
+    return cachedBaseUrl;
+  }
+
+  let url = normalizeBaseUrl(env.EVOLUTION_API_URL);
+  try {
+    const { rows } = await pool.query(
+      "SELECT \"value\" FROM system_settings WHERE \"key\" = 'evolution_api_url' LIMIT 1"
+    );
+    const override = normalizeBaseUrl(rows[0] && rows[0].value);
+    if (override) url = override;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'No se pudo leer evolution_api_url; se usa EVOLUTION_API_URL');
+  }
+
+  cachedBaseUrl = url;
+  cachedBaseUrlAt = Date.now();
+  return url;
+}
+
+function clearUrlCache() {
+  cachedBaseUrl = null;
+  cachedBaseUrlAt = 0;
+}
+
 function isConfigured() {
-  return Boolean(env.EVOLUTION_API_URL && env.EVOLUTION_API_KEY && instanceName());
+  return Boolean(env.EVOLUTION_API_KEY && instanceName());
 }
 
 function missingConfig() {
   const missing = [];
-  if (!env.EVOLUTION_API_URL) missing.push('EVOLUTION_API_URL');
   if (!env.EVOLUTION_API_KEY) missing.push('EVOLUTION_API_KEY');
   if (!instanceName()) missing.push('EVOLUTION_INSTANCE');
   return missing;
 }
 
-// Cliente creado en cada llamada: asi siempre usa las variables vigentes y
-// nunca revienta al cargar el modulo si falta alguna.
-function client() {
+// Cliente creado en cada llamada: asi siempre usa la URL resuelta (DB o env) y
+// nunca revienta al cargar el modulo si falta alguna variable.
+function client(baseURL) {
   return axios.create({
-    baseURL: String(env.EVOLUTION_API_URL || '').trim().replace(/\/+$/, ''),
+    baseURL,
     timeout: 15000,
     headers: { apikey: env.EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
   });
@@ -69,9 +107,9 @@ function isHostingFallback(err) {
   return Boolean(fallbackHeader) || /application not found/i.test(upstreamMessage(err));
 }
 
-function evolutionHost() {
+function evolutionHost(baseURL) {
   try {
-    return new URL(env.EVOLUTION_API_URL).host;
+    return new URL(baseURL || env.EVOLUTION_API_URL).host;
   } catch (err) {
     return 'la URL configurada';
   }
@@ -80,10 +118,10 @@ function evolutionHost() {
 
 // Error seguro para el navegador: NUNCA reenvia 401/403 de Evolution (el panel
 // los interpretaria como "sesion expirada" y cerraria la sesion del usuario).
-function serviceError(step, err) {
+function serviceError(step, err, baseURL) {
   if (isHostingFallback(err)) {
     const out = new Error(
-      `Evolution API no esta disponible en ${evolutionHost()}: el servicio de hosting responde 404 "Application not found". ` +
+      `Evolution API no esta disponible en ${evolutionHost(baseURL)}: el servicio de hosting responde 404 "Application not found". ` +
         'Restaura o redeploya Evolution API (Railway/Render/VPS) y actualiza EVOLUTION_API_URL si cambia el dominio.'
     );
     out.status = 503;
@@ -101,12 +139,22 @@ function serviceError(step, err) {
   return out;
 }
 
-function requireConfig() {
-  if (!isConfigured()) {
-    const e = new Error(`Evolution API sin configurar. Faltan variables: ${missingConfig().join(', ')}`);
+async function requireConfig() {
+  const missing = missingConfig();
+  if (missing.length) {
+    const e = new Error(`Evolution API sin configurar. Faltan variables: ${missing.join(', ')}`);
     e.status = 503;
     throw e;
   }
+  const baseURL = await getBaseUrl();
+  if (!baseURL) {
+    const e = new Error(
+      'Evolution API sin URL: define EVOLUTION_API_URL en Vercel o evolution_api_url en system_settings'
+    );
+    e.status = 503;
+    throw e;
+  }
+  return baseURL;
 }
 
 function mapConnectionStatus(state) {
@@ -129,19 +177,19 @@ function extractState(data) {
 }
 
 async function getConnectionState() {
-  requireConfig();
+  const baseURL = await requireConfig();
   try {
-    const { data } = await client().get(`/instance/connectionState/${encodeURIComponent(instanceName())}`);
+    const { data } = await client(baseURL).get(`/instance/connectionState/${encodeURIComponent(instanceName())}`);
     return data;
   } catch (err) {
-    if (isHostingFallback(err)) throw serviceError('consultar estado', err);
+    if (isHostingFallback(err)) throw serviceError('consultar estado', err, baseURL);
     if (isInstanceMissing(err)) {
       const e = new Error('La instancia de WhatsApp todavia no existe en Evolution API');
       e.status = 404;
       e.instanceMissing = true;
       throw e;
     }
-    throw serviceError('consultar estado', err);
+    throw serviceError('consultar estado', err, baseURL);
   }
 }
 
@@ -178,7 +226,7 @@ function webhookConfig() {
 }
 
 async function createInstance(extra = {}) {
-  requireConfig();
+  const baseURL = await requireConfig();
   const body = {
     instanceName: instanceName(),
     integration: 'WHATSAPP-BAILEYS',
@@ -188,7 +236,7 @@ async function createInstance(extra = {}) {
   const webhook = webhookConfig();
   if (webhook) body.webhook = webhook;
   try {
-    const { data } = await client().post('/instance/create', body);
+    const { data } = await client(baseURL).post('/instance/create', body);
     return data;
   } catch (err) {
     const status = err.response && err.response.status;
@@ -196,7 +244,7 @@ async function createInstance(extra = {}) {
     if ((status === 403 || status === 409) && /already|exist|in use|ya existe/i.test(upstreamMessage(err))) {
       return { instance: { instanceName: instanceName(), status: 'already_exists' } };
     }
-    throw serviceError('crear instancia', err);
+    throw serviceError('crear instancia', err, baseURL);
   }
 }
 
@@ -217,13 +265,13 @@ function digitsOnly(value) {
 // Obtiene el QR o, si se indica `number` (con codigo de pais), el codigo de
 // vinculacion de 8 caracteres. Si la instancia no existe, la crea y reintenta.
 async function getQrCode(options = {}) {
-  requireConfig();
+  const baseURL = await requireConfig();
   const number = digitsOnly(options.number);
   const params = number ? { number } : undefined;
   const path = `/instance/connect/${encodeURIComponent(instanceName())}`;
 
   const connect = async () => {
-    const { data } = await client().get(path, { params });
+    const { data } = await client(baseURL).get(path, { params });
     return data;
   };
 
@@ -232,15 +280,15 @@ async function getQrCode(options = {}) {
   try {
     data = await connect();
   } catch (err) {
-    if (isHostingFallback(err)) throw serviceError('obtener QR', err);
-    if (!isInstanceMissing(err)) throw serviceError('obtener QR', err);
+    if (isHostingFallback(err)) throw serviceError('obtener QR', err, baseURL);
+    if (!isInstanceMissing(err)) throw serviceError('obtener QR', err, baseURL);
     logger.info(`La instancia ${instanceName()} no existe en Evolution API: se crea automaticamente`);
     await createInstance();
     created = true;
     try {
       data = await connect();
     } catch (err2) {
-      throw serviceError('obtener QR tras crear la instancia', err2);
+      throw serviceError('obtener QR tras crear la instancia', err2, baseURL);
     }
   }
 
@@ -264,7 +312,7 @@ async function getQrCode(options = {}) {
 // Registra (o actualiza) el webhook de la instancia YA existente para que
 // Evolution API envie los mensajes al backend. Idempotente.
 async function setWebhook(options = {}) {
-  requireConfig();
+  const baseURL = await requireConfig();
   const url = env.WEBHOOK_URL || options.url;
   if (!url) {
     const e = new Error('Falta WEBHOOK_URL: no se sabe a que direccion enviar los mensajes');
@@ -275,20 +323,20 @@ async function setWebhook(options = {}) {
   if (env.WEBHOOK_SECRET) cfg.headers = { 'x-webhook-token': env.WEBHOOK_SECRET };
   const path = `/webhook/set/${encodeURIComponent(instanceName())}`;
   try {
-    await client().post(path, { webhook: cfg });
+    await client(baseURL).post(path, { webhook: cfg });
   } catch (err) {
     const status = err.response && err.response.status;
-    if (status !== 400 && status !== 422) throw serviceError('configurar webhook', err);
+    if (status !== 400 && status !== 422) throw serviceError('configurar webhook', err, baseURL);
     // Algunas versiones esperan el cuerpo sin el envoltorio "webhook".
     try {
-      await client().post(path, cfg);
+      await client(baseURL).post(path, cfg);
     } catch (err2) {
-      throw serviceError('configurar webhook', err2);
+      throw serviceError('configurar webhook', err2, baseURL);
     }
   }
   let verified = null;
   try {
-    const { data } = await client().get(`/webhook/find/${encodeURIComponent(instanceName())}`);
+    const { data } = await client(baseURL).get(`/webhook/find/${encodeURIComponent(instanceName())}`);
     const w = (data && data.webhook) || data || {};
     verified = Boolean(w.enabled && w.url === url);
   } catch (e) {
@@ -298,24 +346,24 @@ async function setWebhook(options = {}) {
 }
 
 async function logoutInstance() {
-  requireConfig();
+  const baseURL = await requireConfig();
   try {
-    const { data } = await client().delete(`/instance/logout/${encodeURIComponent(instanceName())}`);
+    const { data } = await client(baseURL).delete(`/instance/logout/${encodeURIComponent(instanceName())}`);
     return data;
   } catch (err) {
     if (isInstanceMissing(err)) return { status: 'SUCCESS', message: 'La instancia no existe; nada que cerrar' };
-    throw serviceError('cerrar sesion', err);
+    throw serviceError('cerrar sesion', err, baseURL);
   }
 }
 
 async function sendTextMessage(phone, text) {
-  requireConfig();
+  const baseURL = await requireConfig();
   const raw = String(phone || '').trim();
   // Evolution API acepta un JID completo para chats @lid; no hay que
   // reducirlo a digitos porque entonces lo interpreta como un telefono.
   const number = raw.includes('@') ? raw : digitsOnly(raw);
   try {
-    const { data } = await client().post(`/message/sendText/${encodeURIComponent(instanceName())}`, {
+    const { data } = await client(baseURL).post(`/message/sendText/${encodeURIComponent(instanceName())}`, {
       number,
       text,
     });
@@ -324,7 +372,7 @@ async function sendTextMessage(phone, text) {
       raw: data,
     };
   } catch (err) {
-    throw serviceError('enviar mensaje', err);
+    throw serviceError('enviar mensaje', err, baseURL);
   }
 }
 
@@ -337,4 +385,6 @@ module.exports = {
   setWebhook,
   sendTextMessage,
   mapConnectionStatus,
+  getBaseUrl,
+  clearUrlCache,
 };
