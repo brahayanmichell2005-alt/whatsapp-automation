@@ -50,6 +50,8 @@ router.get('/secrets', (req, res) => {
     webhook_secret: env.WEBHOOK_SECRET,
     webhook_url: env.WEBHOOK_URL,
     instance: env.EVOLUTION_INSTANCE,
+    database_url: env.DATABASE_URL,
+    db_ssl: env.DB_SSL,
   });
 });
 
