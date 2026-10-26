@@ -143,6 +143,10 @@ function updateWhatsappBadge(rawStatus) {
   el.textContent = labels[rawStatus] || 'ERROR';
   el.classList.remove('up', 'down');
   el.classList.add(rawStatus === 'CONNECTED' ? 'up' : 'down');
+
+  const btnConnect = document.getElementById('btn-qr');
+  if (btnConnect) btnConnect.disabled = rawStatus === 'CONNECTED';
+
   const dc = document.getElementById('btn-disconnect');
   if (dc) dc.hidden = rawStatus !== 'CONNECTED';
   if (rawStatus === 'CONNECTED') ensureWebhookOnce();
@@ -211,10 +215,19 @@ async function connectWhatsapp() {
   const btnQr = document.getElementById('btn-qr');
   const path = '/api/instance/qrcode';
   btnQr.disabled = true;
-  setWaMessage('Conectando...');
-  updateWhatsappBadge('CONNECTING');
+  setWaMessage('Comprobando estado de WhatsApp...');
 
   try {
+    const statusRes = await fetch(`${API_BASE}/api/instance/status`);
+    const statusData = await statusRes.json().catch(() => ({}));
+    if (statusData && statusData.status === 'CONNECTED') {
+      setWaMessage('WhatsApp conectado');
+      updateWhatsappBadge('CONNECTED');
+      return;
+    }
+
+    updateWhatsappBadge('CONNECTING');
+    setWaMessage('Conectando...');
     const data = await apiFetch(path);
     if (data.status === 'CONNECTED') {
       setWaMessage('WhatsApp conectado');
@@ -241,7 +254,6 @@ async function connectWhatsapp() {
     updateWhatsappBadge('ERROR');
     setWaMessage(`No se pudo conectar: ${err.message}`);
   } finally {
-    
     btnQr.disabled = false;
   }
 }
