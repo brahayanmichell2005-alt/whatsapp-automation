@@ -16,21 +16,9 @@ const rulesService = require('./rules.service');
 const aiService = require('./ai.service');
 const logger = require('../utils/logger');
 
-// Placeholder para mensajes sin texto (audio, imagen, etc.). Da a la IA un
-// turno valido del usuario para responder de forma natural en lugar de caer
-// a la plantilla.
-const CONTENT_PLACEHOLDERS = {
-  AUDIO: '[Mensaje de voz]',
-  IMAGE: '[Imagen]',
-  VIDEO: '[Video]',
-  DOCUMENT: '[Documento]',
-  LOCATION: '[Ubicacion]',
-};
-
 async function handleInboundMessage(parsedEvent) {
-  const { phone, pushName, externalMessageId, messageType, isGroup, fromMe, remoteJid } =
+  const { phone, pushName, externalMessageId, messageType, content, isGroup, fromMe, remoteJid } =
     parsedEvent;
-  const content = parsedEvent.content || CONTENT_PLACEHOLDERS[messageType] || null;
 
   if (isGroup) {
     // El sistema esta orientado a atencion 1:1 con clientes; los mensajes
