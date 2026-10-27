@@ -17,7 +17,7 @@ const aiService = require('./ai.service');
 const logger = require('../utils/logger');
 
 async function handleInboundMessage(parsedEvent) {
-  const { phone, pushName, externalMessageId, messageType, content, isGroup, fromMe, remoteJid } =
+  const { phone, pushName, externalMessageId, messageType, content, isGroup, fromMe } =
     parsedEvent;
 
   if (isGroup) {
@@ -45,8 +45,8 @@ async function handleInboundMessage(parsedEvent) {
     }
   }
 
-  const customer = await customerModel.findOrCreateByPhone(phone, pushName, remoteJid || null);
-  const prefs = await prefsModel.ensureForCustomer(customer.id);
+  const customer = await customerModel.findOrCreateByPhone(phone, pushName);
+  await prefsModel.ensureForCustomer(customer.id);
 
   const conversation = await conversationModel.findOrCreateOpenByCustomer(customer.id);
 
@@ -76,7 +76,7 @@ async function handleInboundMessage(parsedEvent) {
   });
 
   // ---- Seccion 6, pasos 11-13: reglas / IA y creacion de la respuesta ----
-  await processAutomatedReply({ customer, conversation, content, prefs });
+  await processAutomatedReply({ customer, conversation, content });
 
   return { skipped: false, customer, conversation, message };
 }
@@ -85,7 +85,7 @@ async function handleInboundMessage(parsedEvent) {
 // activada, con fallback al motor de reglas) y encola una respuesta
 // automatica, respetando el opt-out del cliente (Seccion 15-16, 23-24).
 // El envio real de lo encolado ocurre en el worker de la Entrega 6.
-async function processAutomatedReply({ customer, conversation, content, prefs = null }) {
+async function processAutomatedReply({ customer, conversation, content }) {
   const optCommand = rulesService.detectOptCommand(content);
   if (optCommand === 'OPT_OUT') {
     await prefsModel.optOut(customer.id);
@@ -109,52 +109,38 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
     return;
   }
 
-  const currentPrefs = prefs || (await prefsModel.ensureForCustomer(customer.id));
-  if (currentPrefs.opted_out) {
+  const prefs = await prefsModel.ensureForCustomer(customer.id);
+  if (prefs.opted_out) {
     // No generamos ni encolamos respuestas comerciales a quien opto por salir.
     return;
   }
 
-  if (customer.status === 'BLOCKED' || customer.status === 'ARCHIVED') {
-    await logModel.record({
-      eventType: 'auto_reply_skipped',
-      level: 'INFO',
-      message: `Sin respuesta automatica para ${customer.phone}: cliente en estado ${customer.status}`,
-      metadata: { customerId: customer.id, conversationId: conversation.id },
-    });
-    return;
+  let classification = await aiService.classifyIntent(content);
+  if (!classification) {
+    classification = { ...rulesService.classify(content), source: 'RULES' };
   }
-
-  // La clasificacion por IA agregaba otra llamada (y mas latencia) antes de
-  // redactar la respuesta. El motor de reglas ya distingue PRODUCTO /
-  // SERVICIO / INDECISO, asi que se usa directamente y la IA se reserva para
-  // la respuesta conversacional.
-  const classification = { ...rulesService.classify(content), source: 'RULES' };
 
   await customerModel.updateClassification(customer.id, classification);
 
-  // Respuesta conversacional con IA a partir del historial. Si la IA esta
-  // desactivada (o falla), el motor de reglas responde igualmente: el bot no
-  // debe quedarse mudo. Solo se omite si la plantilla es identica a la ultima
-  // respuesta enviada, para no repetir el mismo texto en cada mensaje.
+  // Respuesta conversacional con IA a partir del historial. Sin IA (o si falla)
+  // la plantilla se usa solo en el PRIMER contacto, nunca como respuesta a cada mensaje.
   const history = (await messageModel.listRecentByConversation(conversation.id, 20)) || [];
-  let replyText = aiService.isEnabled()
-    ? await aiService.generateReply({ customerName: customer.name, history })
-    : null;
+  let replyText = await aiService.generateReply({ customerName: customer.name, history });
   let replySource = 'AI';
   if (!replyText) {
-    const template = rulesService.generateReply(classification, customer.name);
-    const lastOutbound = [...history].reverse().find((m) => m.direction === 'OUTBOUND');
-    if (lastOutbound && String(lastOutbound.content || '').trim() === template.trim()) {
+    const previousReplies = history.filter((m) => m.direction === 'OUTBOUND').length;
+    // Con la IA activa NUNCA se manda plantilla: se registra el motivo y no se responde.
+    // Sin IA, la plantilla solo se usa en el primer contacto.
+    if (aiService.isEnabled() || previousReplies > 0) {
       await logModel.record({
         eventType: 'auto_reply_skipped',
         level: 'WARN',
-        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto y la plantilla ya se habia enviado`,
+        message: `Sin respuesta automatica para ${customer.phone}: la IA no genero texto (${(aiService.getLastError && aiService.getLastError()) || 'sin detalle'})`,
         metadata: { customerId: customer.id, conversationId: conversation.id },
       });
       return;
     }
-    replyText = template;
+    replyText = rulesService.generateReply(classification, customer.name);
     replySource = 'RULES';
   }
 
