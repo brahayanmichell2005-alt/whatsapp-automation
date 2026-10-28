@@ -1,176 +1,419 @@
-// Panel administrativo (Entrega 9). Vanilla JS, sin build step:
-// login con JWT (guardado en memoria + localStorage para persistir la
-// sesion entre recargas), navegacion por pestañas, y una seccion por
-// entidad (clientes, conversaciones, cola, programados, logs).
+// =====================================================================
+// Panel administrativo de WhatsApp Automation.
+// Vanilla JS, sin build step. Todos los datos que llegan de la API se
+// escapan con esc() antes de pintarse: el nombre de un cliente o el texto
+// de un mensaje podrían inyectar HTML/JS (XSS almacenado).
+// =====================================================================
 
+'use strict';
+
+// En desarrollo el panel se sirve en :8080 y la API en :3000.
 const API_BASE = window.location.origin.includes(':8080')
   ? window.location.origin.replace(':8080', ':3000')
   : window.location.origin;
 
-const TOKEN_STORAGE_KEY = 'wa_admin_token';
+const TOKEN_KEY = 'wa_admin_token';
+const THEME_KEY = 'wa_theme';
+const PAGE_SIZE = 200;
 
-// Escapa todo dato que venga de WhatsApp o de la base de datos antes de
-// pintarlo con innerHTML. Sin esto, el nombre de un cliente (pushName) o el
-// texto de un mensaje podrian inyectar HTML/JS en el panel (XSS almacenado).
+const state = {
+  user: null,
+  health: null,
+  automation: { status: null, pause_queue: false },
+  customers: [],
+  customersById: new Map(),
+  conversations: [],
+  queue: [],
+  scheduled: [],
+  messages: [],
+  logs: [],
+  loaded: {
+    customers: false,
+    conversations: false,
+    queue: false,
+    scheduled: false,
+    messages: false,
+    logs: false,
+  },
+  errors: {},
+  filters: {
+    customers: '',
+    conversations: 'ALL',
+    queue: 'ALL',
+    scheduled: 'ALL',
+    messages: { direction: 'ALL', q: '' },
+    logs: { level: 'ALL', q: '' },
+  },
+  activeTab: 'tab-dashboard',
+  modalConversationId: null,
+  lastUpdatedAt: null,
+  refreshing: false,
+  waPollTimer: null,
+  webhookEnsured: false,
+};
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+// ---------------------------------------------------------------------
+// Utilidades
+// ---------------------------------------------------------------------
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[c]);
 }
 
-// Función para obtener siempre el token fresco del almacenamiento local
-function getAuthToken() {
-  return localStorage.getItem(TOKEN_STORAGE_KEY) || null;
+function debounce(fn, wait = 200) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
+
+const STATUS_TONES = {
+  ACTIVE: 'up', BLOCKED: 'down', ARCHIVED: '',
+  OPEN: 'up', PENDING: 'warn', HUMAN: 'info', CLOSED: '',
+  SCHEDULED: 'info', QUEUED: 'warn', SENT: 'up', FAILED: 'down', CANCELLED: '',
+  PROCESSING: 'info', PAUSED: 'warn',
+  INBOUND: 'info', OUTBOUND: 'up',
+  INFO: '', WARN: 'warn', ERROR: 'down',
+};
+
+function badgeFor(value) {
+  const tone = STATUS_TONES[value] || '';
+  return `<span class="pill ${tone ? `is-${tone}` : ''}">${esc(value || '—')}</span>`;
+}
+
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? String(value)
+    : d.toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function relativeTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const diff = Date.now() - d.getTime();
+  if (diff < 0) return fmtDate(value);
+  if (diff < 60 * 1000) return 'hace un momento';
+  if (diff < 60 * 60 * 1000) return `hace ${Math.floor(diff / 60000)} min`;
+  if (diff < 24 * 60 * 60 * 1000) return `hace ${Math.floor(diff / 3600000)} h`;
+  if (diff < 7 * 24 * 60 * 60 * 1000) return `hace ${Math.floor(diff / 86400000)} d`;
+  return fmtDate(value);
+}
+
+function timeHtml(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  const iso = Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  return `<time datetime="${esc(iso)}" title="${esc(fmtDate(value))}">${esc(relativeTime(value))}</time>`;
+}
+
+function customerLabel(customer) {
+  if (!customer) return '—';
+  return customer.name ? `${customer.name} · ${customer.phone}` : customer.phone;
+}
+
+function customerById(id) {
+  return state.customersById.get(Number(id)) || null;
+}
+
+function onlyDigits(value) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+function toLocalInputValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 // ---------------------------------------------------------------------
 // Fetch autenticado
 // ---------------------------------------------------------------------
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || null;
+}
+
 async function apiFetch(path, options = {}) {
-  const currentToken = getAuthToken();
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
+  const { skipAuthRedirect = false, ...fetchOptions } = options;
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-
-  if (res.status === 401) {
-    logout();
-    throw new Error('Sesion expirada, vuelve a iniciar sesion');
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers });
+  } catch (err) {
+    throw new Error('No se pudo conectar con el servidor');
   }
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Error ${res.status}`);
+  // Solo se cierra la sesión una vez: si otra petición en paralelo ya
+  // borró el token, no se repite el aviso.
+  if (res.status === 401 && !skipAuthRedirect) {
+    if (getToken()) logout(true);
+    throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
   }
 
   if (res.status === 204) return null;
-  return res.json();
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = body && (body.error || (Array.isArray(body.errors) ? body.errors.join('. ') : null));
+    throw new Error(detail || `Error ${res.status}`);
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------------
-// Login / logout
+// Avisos (toasts)
 // ---------------------------------------------------------------------
+function toast(message, type = 'info', ttl = 4200) {
+  const container = $('#toasts');
+  if (!container) return;
+  const node = document.createElement('div');
+  node.className = `toast is-${type}`;
+  const text = document.createElement('span');
+  text.textContent = message;
+  node.appendChild(text);
+  container.appendChild(node);
+
+  setTimeout(() => {
+    node.classList.add('is-leaving');
+    setTimeout(() => node.remove(), 220);
+  }, ttl);
+}
+
+// ---------------------------------------------------------------------
+// Tema
+// ---------------------------------------------------------------------
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  applyTheme(saved || (prefersLight ? 'light' : 'dark'));
+}
+
+// ---------------------------------------------------------------------
+// Sesión
+// ---------------------------------------------------------------------
+function renderUser() {
+  const user = state.user;
+  const name = user?.name || user?.email || 'Cuenta';
+  $('#user-name').textContent = name;
+  $('#user-email').textContent = user?.email || '—';
+  $('#user-initials').textContent = String(name).trim().charAt(0).toUpperCase() || '?';
+}
+
+async function loadMe() {
+  try {
+    state.user = await apiFetch('/api/auth/me');
+    renderUser();
+  } catch (err) {
+    // Un 401 ya cierra la sesión; otros errores no deben bloquear el panel.
+    if (getToken()) toast(err.message, 'warn');
+  }
+}
+
 function showApp() {
-  document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#login-error').classList.add('hidden');
+  loadMe();
   refreshAll();
 }
 
 function showLogin() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
-  document.getElementById('app').classList.add('hidden');
-  document.getElementById('login-screen').classList.remove('hidden');
+  $('#app').classList.add('hidden');
+  $('#login-screen').classList.remove('hidden');
+  const email = $('#login-email');
+  if (email) setTimeout(() => email.focus(), 50);
 }
 
-function logout() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
+function logout(expired = false) {
+  localStorage.removeItem(TOKEN_KEY);
+  state.user = null;
+  state.webhookEnsured = false;
+  const password = $('#login-password');
+  if (password) password.value = '';
+  stopWaPolling();
   showLogin();
+  if (expired) toast('La sesión terminó. Vuelve a entrar.', 'warn');
 }
 
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = document.getElementById('login-email').value;
-  const password = document.getElementById('login-password').value;
-  const errorEl = document.getElementById('login-error');
-  errorEl.textContent = '';
-
-  try {
-    const data = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
-    showApp();
-  } catch (err) {
-    errorEl.textContent = err.message || 'No se pudo iniciar sesion';
+// ---------------------------------------------------------------------
+// Estado del sistema
+// ---------------------------------------------------------------------
+function setService(service, tone, label, detail) {
+  const dot = $(`#dot-${service}`);
+  const pill = $(`#status-${service}`);
+  const detailEl = $(`#detail-${service}`);
+  if (dot) dot.className = `status-dot ${tone === 'up' ? 'up' : tone === 'warn' ? 'warn' : 'down'}`;
+  if (pill) {
+    pill.className = `pill is-${tone}`;
+    pill.textContent = label;
   }
-});
+  if (detailEl) detailEl.textContent = detail;
+}
 
-document.getElementById('btn-logout').addEventListener('click', async () => {
-  try {
-    await apiFetch('/api/auth/logout', { method: 'POST' });
-  } catch (err) {
-    // ignorar: igual cerramos sesion localmente
+const WHATSAPP_LABELS = {
+  CONNECTED: 'CONECTADO',
+  CONNECTING: 'CONECTANDO',
+  DISCONNECTED: 'DESVINCULADO',
+  ERROR: 'ERROR',
+};
+
+function updateWhatsappBadge(rawStatus, reason) {
+  const status = rawStatus || 'ERROR';
+  const tone = status === 'CONNECTED' ? 'up' : status === 'CONNECTING' ? 'warn' : 'down';
+  const label = WHATSAPP_LABELS[status] || 'SIN ESTADO';
+  let detail = reason || 'Evolution API no reporta una sesión activa';
+  if (status === 'CONNECTED') detail = 'Sesión activa en Evolution API';
+  else if (status === 'CONNECTING') detail = 'Esperando la vinculación del dispositivo';
+
+  setService('whatsapp', tone, label, detail);
+  const pill = $('#connection-pill');
+  if (pill) {
+    pill.className = `pill is-${tone}`;
+    pill.textContent = label;
   }
-  logout();
-});
 
-// ---------------------------------------------------------------------
-// Tabs
-// ---------------------------------------------------------------------
-document.querySelectorAll('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.add('hidden'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.remove('hidden');
-  });
-});
+  const disconnectBtn = $('#btn-disconnect');
+  if (disconnectBtn) disconnectBtn.hidden = status !== 'CONNECTED';
 
-// ---------------------------------------------------------------------
-// Estado / healthcheck
-// ---------------------------------------------------------------------
+  if (status === 'CONNECTED') ensureWebhookOnce();
+}
+
+function renderHealth(data) {
+  const backendOk = data.backend === 'UP';
+  const databaseOk = data.database === 'UP';
+
+  setService(
+    'backend',
+    backendOk ? 'up' : 'down',
+    backendOk ? 'EN LÍNEA' : 'CAÍDO',
+    backendOk ? 'La API responde correctamente' : 'Sin respuesta de la API'
+  );
+  setService(
+    'database',
+    databaseOk ? 'up' : 'down',
+    databaseOk ? 'EN LÍNEA' : 'CAÍDA',
+    databaseOk ? 'PostgreSQL conectado' : 'No se pudo conectar a PostgreSQL'
+  );
+  updateWhatsappBadge(data.whatsapp, data.whatsapp_reason);
+
+  const healthPill = $('#health-pill');
+  if (healthPill) {
+    if (!databaseOk) {
+      healthPill.className = 'pill is-down';
+      healthPill.textContent = 'Revisar base de datos';
+    } else if (data.whatsapp !== 'CONNECTED') {
+      healthPill.className = 'pill is-warn';
+      healthPill.textContent = 'WhatsApp sin conectar';
+    } else {
+      healthPill.className = 'pill is-up';
+      healthPill.textContent = 'Todo en orden';
+    }
+  }
+}
+
 async function fetchHealth() {
   try {
-    const res = await fetch(`${API_BASE}/api/dashboard/health`);
-    const data = await res.json();
-    updateBadge('backend', data.backend === 'UP');
-    updateBadge('database', data.database === 'UP');
-    updateWhatsappBadge(data.whatsapp);
+    const res = await fetch(`${API_BASE}/api/dashboard/health`, { cache: 'no-store' });
+    const data = await res.json().catch(() => null);
+    if (!data) throw new Error('Respuesta no válida');
+    state.health = data;
+    renderHealth(data);
   } catch (err) {
-    updateBadge('backend', false);
-    updateBadge('database', false);
-    updateWhatsappBadge('ERROR');
+    renderHealth({
+      backend: 'DOWN',
+      database: 'DOWN',
+      whatsapp: 'ERROR',
+      whatsapp_reason: err.message,
+    });
   }
+  touchUpdated();
 }
 
-// Una vez por sesion: se asegura de que Evolution API envie los mensajes al backend.
-let webhookEnsured = false;
-async function ensureWebhookOnce() {
-  if (webhookEnsured || !getAuthToken()) return;
-  webhookEnsured = true;
+// ---------------------------------------------------------------------
+// Automatización
+// ---------------------------------------------------------------------
+const AUTOMATION_HINTS = {
+  ACTIVE: 'Los mensajes se envían automáticamente respetando horario y límites.',
+  PAUSED: 'No se agregan nuevos envíos ni se procesa la cola.',
+  STOPPED: 'Todos los envíos automáticos están detenidos.',
+};
+
+function renderAutomation() {
+  const status = state.automation?.status || null;
+  const pill = $('#automation-status');
+  if (pill) {
+    const tone = status === 'ACTIVE' ? 'up' : status === 'PAUSED' ? 'warn' : status === 'STOPPED' ? 'down' : '';
+    pill.className = `pill ${tone ? `is-${tone}` : ''}`;
+    pill.textContent = status || '—';
+  }
+
+  const hint = $('#automation-hint');
+  if (hint) {
+    hint.textContent = (AUTOMATION_HINTS[status] || 'Consulta el estado del envío automático.')
+      + (state.automation?.pause_queue ? ' La cola está pausada.' : '');
+  }
+
+  $$('[data-automation]').forEach((btn) => {
+    const action = btn.dataset.automation;
+    btn.disabled =
+      (status === 'ACTIVE' && (action === 'activate' || action === 'resume')) ||
+      (status === 'PAUSED' && action === 'pause') ||
+      (status === 'STOPPED' && action === 'stop');
+  });
+}
+
+async function fetchAutomationStatus() {
   try {
-    await apiFetch('/api/instance/webhook', { method: 'POST' });
+    state.automation = await apiFetch('/api/automation/status');
   } catch (err) {
-    webhookEnsured = false; // se reintenta en el siguiente chequeo de estado
+    state.automation = { status: null, pause_queue: false };
+  }
+  renderAutomation();
+}
+
+async function runAutomationAction(action) {
+  const labels = {
+    activate: 'Automatización activada',
+    pause: 'Automatización pausada',
+    stop: 'Automatización detenida',
+    resume: 'Automatización reanudada',
+  };
+  if (action === 'stop' && !window.confirm('¿Detener todos los envíos automáticos?')) return;
+
+  try {
+    await apiFetch(`/api/automation/${action}`, { method: 'POST' });
+    toast(labels[action] || 'Estado actualizado', 'success');
+    await fetchAutomationStatus();
+    loadQueue();
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 
-function updateWhatsappBadge(rawStatus) {
-  const el = document.getElementById('status-whatsapp');
-  if (!el) return;
-  const labels = { CONNECTED: 'CONECTADO', DISCONNECTED: 'DESVINCULADO', CONNECTING: 'CONECTANDO', ERROR: 'ERROR' };
-  el.textContent = labels[rawStatus] || 'ERROR';
-  el.classList.remove('up', 'down');
-  el.classList.add(rawStatus === 'CONNECTED' ? 'up' : 'down');
-  const dc = document.getElementById('btn-disconnect');
-  if (dc) dc.hidden = rawStatus !== 'CONNECTED';
-  if (rawStatus === 'CONNECTED') ensureWebhookOnce();
-}
-
-// PostgreSQL devuelve fechas ISO (2026-09-19T14:30:00.000Z): se muestran en hora local.
-function fmtDate(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('es-PE');
-}
-
-function updateBadge(service, isUp) {
-  const el = document.getElementById(`status-${service}`);
-  if (!el) return;
-  el.textContent = isUp ? 'CONECTADO' : 'DESCONECTADO';
-  el.classList.remove('up', 'down');
-  el.classList.add(isUp ? 'up' : 'down');
-}
-
-let waPollTimer = null;
-
-function setWaMessage(text, extraNode) {
-  const container = document.getElementById('qr-container');
+// ---------------------------------------------------------------------
+// Conexión de WhatsApp
+// ---------------------------------------------------------------------
+function setWaMessage(text, extraNode = null) {
+  const container = $('#qr-container');
+  if (!container) return;
   container.textContent = '';
   if (text) {
     const p = document.createElement('p');
-    p.className = 'note';
+    p.className = 'muted';
     p.textContent = text;
     container.appendChild(p);
   }
@@ -178,23 +421,26 @@ function setWaMessage(text, extraNode) {
 }
 
 function stopWaPolling() {
-  if (waPollTimer) clearInterval(waPollTimer);
-  waPollTimer = null;
+  if (state.waPollTimer) clearInterval(state.waPollTimer);
+  state.waPollTimer = null;
 }
 
-// Consulta el estado REAL de Evolution API cada 5 s (maximo 3 minutos).
+// Consulta el estado real de Evolution API cada 5 s (máximo 3 minutos).
 function startWaPolling() {
   stopWaPolling();
   let tries = 0;
-  waPollTimer = setInterval(async () => {
+  state.waPollTimer = setInterval(async () => {
     tries += 1;
     try {
-      const res = await fetch(`${API_BASE}/api/instance/status`);
+      const res = await fetch(`${API_BASE}/api/instance/status`, { cache: 'no-store' });
       const data = await res.json();
-      updateWhatsappBadge(data.status);
+      updateWhatsappBadge(data.status, data.reason);
       if (data.status === 'CONNECTED') {
         stopWaPolling();
-        setWaMessage('WhatsApp conectado');
+        setWaMessage('WhatsApp conectado. Ya puedes recibir y enviar mensajes.');
+        toast('WhatsApp conectado', 'success');
+        fetchHealth();
+        loadQueue();
         return;
       }
     } catch (err) {
@@ -202,255 +448,944 @@ function startWaPolling() {
     }
     if (tries >= 36) {
       stopWaPolling();
-      setWaMessage('Tiempo agotado. Genera un codigo nuevo e intentalo otra vez.');
+      setWaMessage('Tiempo agotado. Genera un código nuevo e inténtalo otra vez.');
     }
   }, 5000);
 }
 
+async function ensureWebhookOnce() {
+  if (state.webhookEnsured || !getToken()) return;
+  state.webhookEnsured = true;
+  try {
+    await apiFetch('/api/instance/webhook', { method: 'POST' });
+  } catch (err) {
+    state.webhookEnsured = false; // se reintenta en el siguiente chequeo
+  }
+}
+
 async function connectWhatsapp() {
-  const btnQr = document.getElementById('btn-qr');
-  const path = '/api/instance/qrcode';
-  btnQr.disabled = true;
-  setWaMessage('Conectando...');
+  const btn = $('#btn-qr');
+  const rawNumber = $('#pairing-number')?.value || '';
+  const number = onlyDigits(rawNumber);
+
+  if (rawNumber.trim() && (number.length < 8 || number.length > 15)) {
+    toast('Número inválido: usa solo dígitos con código de país (8 a 15).', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  setWaMessage('Conectando con Evolution API…');
   updateWhatsappBadge('CONNECTING');
 
   try {
+    const path = number ? `/api/instance/qrcode?number=${number}` : '/api/instance/qrcode';
     const data = await apiFetch(path);
+
     if (data.status === 'CONNECTED') {
-      setWaMessage('WhatsApp conectado');
+      setWaMessage('WhatsApp ya está conectado.');
       updateWhatsappBadge('CONNECTED');
       return;
     }
+
     if (data.pairingCode) {
-      const code = String(data.pairingCode).replace(/(.{4})(?=.)/, '$1-');
+      const code = String(data.pairingCode).replace(/(.{4})(?=.)/g, '$1-');
       const big = document.createElement('div');
+      big.className = 'pairing-code';
       big.textContent = code;
-      big.style.cssText = 'font-size:2rem;letter-spacing:.2em;font-weight:700;margin:12px 0';
-      setWaMessage('En WhatsApp: Dispositivos vinculados > Vincular con el numero de telefono. Escribe este codigo:', big);
+      setWaMessage(
+        'En WhatsApp: Dispositivos vinculados → Vincular con el número de teléfono. Escribe este código:',
+        big
+      );
       startWaPolling();
     } else if (data.base64) {
       const img = document.createElement('img');
-      img.alt = 'Codigo QR de WhatsApp';
+      img.alt = 'Código QR de WhatsApp';
       img.src = data.base64.startsWith('data:') ? data.base64 : `data:image/png;base64,${data.base64}`;
-      setWaMessage('Escanea este QR desde WhatsApp > Dispositivos vinculados > Vincular un dispositivo.', img);
+      setWaMessage(
+        'Escanea este QR desde WhatsApp → Dispositivos vinculados → Vincular un dispositivo.',
+        img
+      );
       startWaPolling();
     } else {
-      setWaMessage('Evolution API aun esta preparando la sesion. Espera unos segundos y vuelve a pulsar el boton.');
+      setWaMessage('Evolution API aún está preparando la sesión. Espera unos segundos y vuelve a intentarlo.');
     }
   } catch (err) {
-    updateWhatsappBadge('ERROR');
+    updateWhatsappBadge('ERROR', err.message);
     setWaMessage(`No se pudo conectar: ${err.message}`);
+    toast(err.message, 'error');
   } finally {
-    
-    btnQr.disabled = false;
+    btn.disabled = false;
   }
 }
 
 async function disconnectWhatsapp() {
-  if (!window.confirm('Desconectar WhatsApp de este panel?')) return;
+  if (!window.confirm('¿Desconectar WhatsApp de este panel?')) return;
   stopWaPolling();
   try {
     await apiFetch('/api/instance/logout', { method: 'POST' });
     setWaMessage('WhatsApp desconectado.');
+    toast('WhatsApp desconectado', 'success');
   } catch (err) {
     setWaMessage(`No se pudo desconectar: ${err.message}`);
+    toast(err.message, 'error');
   }
   fetchHealth();
 }
 
-
-document.getElementById('btn-qr')?.addEventListener('click', () => connectWhatsapp());
-document.getElementById('btn-disconnect')?.addEventListener('click', disconnectWhatsapp);
-
 // ---------------------------------------------------------------------
-// Control de automatizacion
+// Helpers de tablas
 // ---------------------------------------------------------------------
-async function fetchAutomationStatus() {
-  try {
-    const data = await apiFetch('/api/automation/status');
-    document.getElementById('automation-status').textContent = data.status;
-  } catch (err) {
-    document.getElementById('automation-status').textContent = 'ERROR';
+function tableBody(tableId) {
+  return document.querySelector(`#${tableId} tbody`);
+}
+
+function loadingRow(tableId, colspan) {
+  const body = tableBody(tableId);
+  if (body) {
+    body.innerHTML = `<tr><td colspan="${colspan}" class="empty-cell">
+      <span class="skeleton" style="display:inline-block;width:180px"></span>
+    </td></tr>`;
   }
 }
 
-document.querySelectorAll('[data-automation]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    try {
-      await apiFetch(`/api/automation/${btn.dataset.automation}`, { method: 'POST' });
-      fetchAutomationStatus();
-    } catch (err) {
-      alert(err.message);
-    }
-  });
-});
+function renderRows(tableId, colspan, rows, emptyText) {
+  const body = tableBody(tableId);
+  if (!body) return;
+  body.innerHTML = rows.length
+    ? rows.join('')
+    : `<tr><td colspan="${colspan}" class="empty-cell">${esc(emptyText)}</td></tr>`;
+}
+
+function errorRow(tableId, colspan, message) {
+  const body = tableBody(tableId);
+  if (body) {
+    body.innerHTML = `<tr><td colspan="${colspan}" class="empty-cell error-cell">${esc(message)}</td></tr>`;
+  }
+}
+
+function setCount(selector, text) {
+  const el = $(selector);
+  if (el) el.textContent = text;
+}
+
+// ---------------------------------------------------------------------
+// KPIs
+// ---------------------------------------------------------------------
+function updateKpis() {
+  const customersEl = $('#kpi-customers');
+  if (customersEl) customersEl.textContent = state.loaded.customers ? state.customers.length : '–';
+
+  const conversationsEl = $('#kpi-conversations');
+  if (conversationsEl) {
+    conversationsEl.textContent = state.loaded.conversations
+      ? state.conversations.filter((c) => c.status !== 'CLOSED').length
+      : '–';
+  }
+
+  const queueEl = $('#kpi-queue');
+  if (queueEl) {
+    queueEl.textContent = state.loaded.queue
+      ? state.queue.filter((q) => q.status === 'PENDING' || q.status === 'PROCESSING').length
+      : '–';
+  }
+
+  const errorsEl = $('#kpi-errors');
+  if (errorsEl) {
+    errorsEl.textContent = state.loaded.logs
+      ? state.logs.filter((l) => l.level === 'ERROR').length
+      : '–';
+  }
+}
 
 // ---------------------------------------------------------------------
 // Clientes
 // ---------------------------------------------------------------------
+function fillCustomerSelect() {
+  const select = $('#sched-customer');
+  if (!select) return;
+  const current = select.value;
+  const options = state.customers
+    .map((c) => `<option value="${esc(c.id)}">${esc(customerLabel(c))}</option>`)
+    .join('');
+  select.innerHTML = `<option value="">Selecciona un cliente…</option>${options}`;
+  if (current && state.customersById.has(Number(current))) select.value = current;
+}
+
+function renderCustomers() {
+  if (!state.loaded.customers) return;
+  const query = state.filters.customers.trim().toLowerCase();
+
+  const filtered = state.customers.filter((c) => {
+    if (!query) return true;
+    return [c.phone, c.name, c.email, c.status, c.interest_type, c.interest_level]
+      .some((value) => String(value || '').toLowerCase().includes(query));
+  });
+
+  setCount(
+    '#customers-count',
+    query
+      ? `${filtered.length} de ${state.customers.length} clientes`
+      : `${state.customers.length} ${state.customers.length === 1 ? 'cliente' : 'clientes'}`
+  );
+
+  const rows = filtered.map((c) => `
+    <tr>
+      <td>${esc(c.phone)}</td>
+      <td>
+        ${esc(c.name || '—')}
+        ${c.email ? `<span class="cell-sub">${esc(c.email)}</span>` : ''}
+      </td>
+      <td>${badgeFor(c.status)}</td>
+      <td>
+        ${esc(c.interest_type || '—')}
+        ${c.interest_level ? `<span class="cell-sub">${esc(c.interest_level)}</span>` : ''}
+      </td>
+      <td>${timeHtml(c.last_message_at)}</td>
+    </tr>`);
+
+  renderRows('table-customers', 5, rows, query ? 'Ningún cliente coincide con la búsqueda.' : 'Todavía no hay clientes.');
+}
+
 async function loadCustomers() {
-  const tbody = document.querySelector('#table-customers tbody');
-  tbody.innerHTML = '<tr><td colspan="6">Cargando...</td></tr>';
+  if (!state.loaded.customers) loadingRow('table-customers', 5);
   try {
-    const customers = await apiFetch('/api/customers?limit=100');
-    tbody.innerHTML = customers
-      .map(
-        (c) => `<tr>
-          <td>${esc(c.id)}</td>
-          <td>${esc(c.phone)}</td>
-          <td>${esc(c.name || '-')}</td>
-          <td>${esc(c.status)}</td>
-          <td>${esc(c.interest_type || '-')}</td>
-          <td>${esc(fmtDate(c.last_message_at))}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="6">Sin clientes todavia.</td></tr>';
+    const customers = await apiFetch(`/api/customers?limit=${PAGE_SIZE}`);
+    state.customers = Array.isArray(customers) ? customers : [];
+    state.customersById = new Map(state.customers.map((c) => [Number(c.id), c]));
+    state.loaded.customers = true;
+    delete state.errors.customers;
+    renderCustomers();
+    fillCustomerSelect();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6">Error: ${esc(err.message)}</td></tr>`;
+    state.errors.customers = err.message;
+    setCount('#customers-count', 'No se pudieron cargar los clientes');
+    errorRow('table-customers', 5, `No se pudieron cargar los clientes: ${err.message}`);
+  }
+  updateKpis();
+}
+
+async function createCustomer(event) {
+  event.preventDefault();
+  const phone = onlyDigits($('#customer-phone').value);
+  const name = $('#customer-name').value.trim();
+  const email = $('#customer-email').value.trim();
+
+  if (phone.length < 8 || phone.length > 15) {
+    toast('El teléfono debe tener entre 8 y 15 dígitos, sin “+”.', 'error');
+    return;
+  }
+
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await apiFetch('/api/customers', {
+      method: 'POST',
+      body: JSON.stringify({ phone, name: name || null, email: email || null }),
+    });
+    toast('Cliente creado', 'success');
+    event.target.reset();
+    const details = event.target.closest('details');
+    if (details) details.open = false;
+    await loadCustomers();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 }
 
 // ---------------------------------------------------------------------
 // Conversaciones
 // ---------------------------------------------------------------------
-async function loadConversations() {
-  const tbody = document.querySelector('#table-conversations tbody');
-  tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
-  try {
-    const conversations = await apiFetch('/api/conversations?limit=100');
-    tbody.innerHTML = conversations
-      .map(
-        (c) => `<tr>
-          <td>${esc(c.id)}</td>
-          <td>${esc(c.customer_id)}</td>
-          <td>${esc(c.status)}</td>
-          <td>${esc(fmtDate(c.last_message_at))}</td>
-          <td>
-            ${c.status !== 'CLOSED' ? `<button class="btn btn-secondary" data-close-conversation="${esc(c.id)}">Cerrar</button>` : '-'}
-          </td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="5">Sin conversaciones todavia.</td></tr>';
+function renderConversations() {
+  if (!state.loaded.conversations) return;
+  const filter = state.filters.conversations;
+  const filtered = state.conversations.filter((c) => filter === 'ALL' || c.status === filter);
 
-    tbody.querySelectorAll('[data-close-conversation]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        try {
-          await apiFetch(`/api/conversations/${btn.dataset.closeConversation}`, {
-            method: 'PUT',
-            body: JSON.stringify({ status: 'CLOSED' }),
-          });
-          loadConversations();
-        } catch (err) {
-          alert(err.message);
-        }
-      });
-    });
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
-  }
-}
+  setCount(
+    '#conversations-count',
+    filter === 'ALL'
+      ? `${state.conversations.length} conversaciones`
+      : `${filtered.length} de ${state.conversations.length} conversaciones`
+  );
 
-// ---------------------------------------------------------------------
-// Cola de mensajes
-// ---------------------------------------------------------------------
-async function loadQueue() {
-  const tbody = document.querySelector('#table-queue tbody');
-  tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
-  try {
-    const items = await apiFetch('/api/queue?limit=100');
-    tbody.innerHTML = items
-      .map(
-        (q) => `<tr>
-          <td>${esc(q.id)}</td>
-          <td>${esc(q.phone)}</td>
-          <td>${esc((q.message || '').slice(0, 60))}</td>
-          <td>${esc(q.status)}</td>
-          <td>${esc(q.attempts)}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="5">Cola vacia.</td></tr>';
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
-  }
-}
-
-document.querySelectorAll('[data-queue]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    try {
-      await apiFetch(`/api/queue/${btn.dataset.queue}`, { method: 'POST' });
-      loadQueue();
-    } catch (err) {
-      alert(err.message);
+  const rows = filtered.map((c) => {
+    const customer = customerById(c.customer_id);
+    const actions = [];
+    actions.push(`<button class="btn btn-ghost btn-sm" data-conv-action="view" data-id="${esc(c.id)}">Ver</button>`);
+    if (c.status !== 'HUMAN' && c.status !== 'CLOSED') {
+      actions.push(`<button class="btn btn-ghost btn-sm" data-conv-action="human" data-id="${esc(c.id)}">Derivar</button>`);
     }
+    if (c.status !== 'CLOSED') {
+      actions.push(`<button class="btn btn-danger btn-sm" data-conv-action="close" data-id="${esc(c.id)}">Cerrar</button>`);
+    }
+
+    return `<tr>
+      <td>
+        ${esc(customer ? customerLabel(customer) : `Cliente #${c.customer_id}`)}
+        <span class="cell-sub">Conversación #${esc(c.id)}</span>
+      </td>
+      <td>${badgeFor(c.status)}</td>
+      <td>${timeHtml(c.last_message_at || c.started_at)}</td>
+      <td><div class="btn-row">${actions.join('')}</div></td>
+    </tr>`;
   });
-});
+
+  renderRows('table-conversations', 4, rows, 'No hay conversaciones en este estado.');
+}
+
+async function loadConversations() {
+  if (!state.loaded.conversations) loadingRow('table-conversations', 4);
+  try {
+    const conversations = await apiFetch(`/api/conversations?limit=${PAGE_SIZE}`);
+    state.conversations = Array.isArray(conversations) ? conversations : [];
+    state.loaded.conversations = true;
+    delete state.errors.conversations;
+    renderConversations();
+  } catch (err) {
+    state.errors.conversations = err.message;
+    setCount('#conversations-count', 'No se pudieron cargar las conversaciones');
+    errorRow('table-conversations', 4, `No se pudieron cargar las conversaciones: ${err.message}`);
+  }
+  updateKpis();
+}
+
+async function updateConversation(id, status) {
+  const messages = {
+    HUMAN: 'Conversación derivada a atención humana',
+    CLOSED: 'Conversación cerrada',
+    OPEN: 'Conversación reabierta',
+  };
+  await apiFetch(`/api/conversations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+  toast(messages[status] || 'Conversación actualizada', 'success');
+  await loadConversations();
+  if (state.modalConversationId && String(state.modalConversationId) === String(id)) {
+    const conversation = state.conversations.find((c) => String(c.id) === String(id));
+    if (conversation) updateModalHeader(conversation);
+  }
+}
+
+async function handleConversationAction(action, id) {
+  if (action === 'view') {
+    openConversation(id);
+    return;
+  }
+
+  if (action === 'close' && !window.confirm('¿Cerrar esta conversación?')) return;
+
+  try {
+    await updateConversation(id, action === 'human' ? 'HUMAN' : 'CLOSED');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Modal de conversación
+// ---------------------------------------------------------------------
+function updateModalHeader(conversation) {
+  const customer = customerById(conversation.customer_id);
+  $('#modal-subtitle').textContent =
+    `${customer ? customerLabel(customer) : `Cliente #${conversation.customer_id}`} · Estado: ${conversation.status}`;
+
+  const actions = [];
+  if (conversation.status !== 'HUMAN' && conversation.status !== 'CLOSED') {
+    actions.push('<button class="btn btn-ghost btn-sm" data-modal-action="human">Derivar a humano</button>');
+  }
+  if (conversation.status !== 'CLOSED') {
+    actions.push('<button class="btn btn-danger btn-sm" data-modal-action="close">Cerrar conversación</button>');
+  }
+  $('#modal-actions').innerHTML = actions.join('');
+}
+
+async function openConversation(id) {
+  const conversation = state.conversations.find((c) => String(c.id) === String(id));
+  if (!conversation) {
+    toast('No se encontró la conversación', 'error');
+    return;
+  }
+
+  state.modalConversationId = conversation.id;
+  updateModalHeader(conversation);
+  $('#chat-messages').innerHTML = '<p class="muted">Cargando mensajes…</p>';
+  $('#modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  const closeBtn = $('#modal .modal-head [data-close-modal]');
+  if (closeBtn) setTimeout(() => closeBtn.focus(), 60);
+
+  try {
+    const messages = await apiFetch(
+      `/api/messages?conversation_id=${encodeURIComponent(conversation.id)}&limit=${PAGE_SIZE}`
+    );
+    renderChat(messages);
+  } catch (err) {
+    $('#chat-messages').innerHTML = `<p class="alert alert-error">${esc(err.message)}</p>`;
+  }
+}
+
+function renderChat(messages) {
+  const container = $('#chat-messages');
+  if (!Array.isArray(messages) || messages.length === 0) {
+    container.innerHTML = '<p class="muted">No hay mensajes registrados en esta conversación.</p>';
+    return;
+  }
+
+  container.innerHTML = messages.map((m) => {
+    const outbound = m.direction === 'OUTBOUND';
+    const content = m.content || `[${m.message_type || 'ARCHIVO'}]`;
+    return `<div class="bubble ${outbound ? 'out' : 'in'}">
+      <p>${esc(content)}</p>
+      <span class="bubble-meta">${esc(fmtDate(m.created_at))} · ${esc(m.status || '—')}</span>
+    </div>`;
+  }).join('');
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function closeModal() {
+  state.modalConversationId = null;
+  $('#modal').classList.add('hidden');
+  document.body.style.overflow = '';
+  $('#chat-messages').innerHTML = '';
+}
+
+// ---------------------------------------------------------------------
+// Cola
+// ---------------------------------------------------------------------
+function renderQueue() {
+  if (!state.loaded.queue) return;
+  const filter = state.filters.queue;
+  const filtered = state.queue.filter((q) => filter === 'ALL' || q.status === filter);
+
+  setCount(
+    '#queue-count',
+    filter === 'ALL' ? `${state.queue.length} mensajes` : `${filtered.length} de ${state.queue.length} mensajes`
+  );
+
+  const rows = filtered.map((q) => `<tr>
+    <td>${esc(q.id)}</td>
+    <td>${esc(q.phone)}</td>
+    <td>
+      <span class="cell-truncate" title="${esc(q.message || '')}">${esc(q.message || '—')}</span>
+      ${q.error_message ? `<span class="cell-sub error-cell">${esc(q.error_message)}</span>` : ''}
+    </td>
+    <td>${badgeFor(q.status)}</td>
+    <td>${esc(q.attempts ?? 0)}</td>
+    <td>${timeHtml(q.created_at)}</td>
+  </tr>`);
+
+  renderRows('table-queue', 6, rows, 'No hay mensajes en la cola con este estado.');
+}
+
+async function loadQueue() {
+  if (!state.loaded.queue) loadingRow('table-queue', 6);
+  try {
+    const items = await apiFetch(`/api/queue?limit=${PAGE_SIZE}`);
+    state.queue = Array.isArray(items) ? items : [];
+    state.loaded.queue = true;
+    delete state.errors.queue;
+    renderQueue();
+  } catch (err) {
+    state.errors.queue = err.message;
+    setCount('#queue-count', 'No se pudo cargar la cola');
+    errorRow('table-queue', 6, `No se pudo cargar la cola: ${err.message}`);
+  }
+  updateKpis();
+}
+
+async function runQueueAction(action) {
+  if (action === 'stop' && !window.confirm('¿Detener la cola y cancelar todos los mensajes abiertos?')) return;
+  const labels = { pause: 'Cola pausada', resume: 'Cola reanudada', stop: 'Cola detenida' };
+  try {
+    await apiFetch(`/api/queue/${action}`, { method: 'POST' });
+    toast(labels[action] || 'Cola actualizada', 'success');
+    await Promise.all([loadQueue(), fetchAutomationStatus()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
 
 // ---------------------------------------------------------------------
 // Mensajes programados
 // ---------------------------------------------------------------------
+function renderScheduled() {
+  if (!state.loaded.scheduled) return;
+  const filter = state.filters.scheduled;
+  const filtered = state.scheduled.filter((s) => filter === 'ALL' || s.status === filter);
+
+  setCount(
+    '#scheduled-count',
+    filter === 'ALL' ? `${state.scheduled.length} programados` : `${filtered.length} de ${state.scheduled.length} programados`
+  );
+
+  const rows = filtered.map((s) => {
+    const customer = customerById(s.customer_id);
+    const actions = s.status === 'SCHEDULED'
+      ? `<button class="btn btn-danger btn-sm" data-sched-action="cancel" data-id="${esc(s.id)}">Cancelar</button>`
+      : '—';
+
+    return `<tr>
+      <td>
+        ${esc(customer ? customerLabel(customer) : s.phone)}
+        <span class="cell-sub">${esc(s.phone)}</span>
+      </td>
+      <td><span class="cell-truncate" title="${esc(s.message || '')}">${esc(s.message || '—')}</span></td>
+      <td>${timeHtml(s.scheduled_at)}</td>
+      <td>${badgeFor(s.status)}</td>
+      <td><div class="btn-row">${actions}</div></td>
+    </tr>`;
+  });
+
+  renderRows('table-scheduled', 5, rows, 'No hay mensajes programados con este estado.');
+}
+
 async function loadScheduled() {
-  const tbody = document.querySelector('#table-scheduled tbody');
-  tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
+  if (!state.loaded.scheduled) loadingRow('table-scheduled', 5);
   try {
-    const items = await apiFetch('/api/scheduled-messages?limit=100');
-    tbody.innerHTML = items
-      .map(
-        (s) => `<tr>
-          <td>${esc(s.id)}</td>
-          <td>${esc(s.phone)}</td>
-          <td>${esc((s.message || '').slice(0, 60))}</td>
-          <td>${esc(fmtDate(s.scheduled_at))}</td>
-          <td>${esc(s.status)}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="5">Sin mensajes programados.</td></tr>';
+    const items = await apiFetch(`/api/scheduled-messages?limit=${PAGE_SIZE}`);
+    state.scheduled = Array.isArray(items) ? items : [];
+    state.loaded.scheduled = true;
+    delete state.errors.scheduled;
+    renderScheduled();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Error: ${esc(err.message)}</td></tr>`;
+    state.errors.scheduled = err.message;
+    setCount('#scheduled-count', 'No se pudieron cargar los programados');
+    errorRow('table-scheduled', 5, `No se pudieron cargar los programados: ${err.message}`);
+  }
+}
+
+function resetScheduleDate() {
+  const input = $('#sched-when');
+  if (!input) return;
+  const soon = new Date(Date.now() + 60 * 1000);
+  input.min = toLocalInputValue(soon);
+  input.value = toLocalInputValue(new Date(Date.now() + 5 * 60 * 1000));
+}
+
+async function createScheduledMessage(event) {
+  event.preventDefault();
+  const customerId = Number($('#sched-customer').value);
+  const phone = onlyDigits($('#sched-phone').value);
+  const message = $('#sched-message').value.trim();
+  const whenRaw = $('#sched-when').value;
+
+  if (!customerId) return toast('Selecciona un cliente', 'error');
+  if (phone.length < 8 || phone.length > 15) return toast('El teléfono debe tener entre 8 y 15 dígitos', 'error');
+  if (!message) return toast('Escribe el mensaje', 'error');
+
+  const scheduledAt = new Date(whenRaw);
+  if (Number.isNaN(scheduledAt.getTime())) return toast('Fecha y hora inválidas', 'error');
+  if (scheduledAt.getTime() <= Date.now()) return toast('La fecha debe ser futura', 'error');
+
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await apiFetch('/api/scheduled-messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_id: customerId,
+        phone,
+        message,
+        scheduled_at: scheduledAt.toISOString(),
+      }),
+    });
+    toast('Mensaje programado', 'success');
+    $('#sched-message').value = '';
+    resetScheduleDate();
+    await loadScheduled();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function cancelScheduledMessage(id) {
+  if (!window.confirm('¿Cancelar este mensaje programado?')) return;
+  try {
+    await apiFetch(`/api/scheduled-messages/${id}`, { method: 'DELETE' });
+    toast('Mensaje cancelado', 'success');
+    await loadScheduled();
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 
 // ---------------------------------------------------------------------
-// Logs / errores
+// Mensajes
 // ---------------------------------------------------------------------
+function renderMessages() {
+  if (!state.loaded.messages) return;
+  const { direction, q } = state.filters.messages;
+  const query = q.trim().toLowerCase();
+
+  const filtered = state.messages.filter((m) => {
+    if (direction !== 'ALL' && m.direction !== direction) return false;
+    if (!query) return true;
+    const customer = customerById(m.customer_id);
+    return [m.content, m.message_type, m.status, clientSearch(customer)]
+      .some((value) => String(value || '').toLowerCase().includes(query));
+  });
+
+  setCount(
+    '#messages-count',
+    query || direction !== 'ALL'
+      ? `${filtered.length} de ${state.messages.length} mensajes`
+      : `${state.messages.length} mensajes recientes`
+  );
+
+  const rows = filtered.map((m) => {
+    const customer = customerById(m.customer_id);
+    return `<tr>
+      <td>${timeHtml(m.created_at)}</td>
+      <td>${badgeFor(m.direction)}</td>
+      <td>${esc(customer ? customerLabel(customer) : `Cliente #${m.customer_id}`)}</td>
+      <td>${esc(m.message_type || '—')}</td>
+      <td><span class="cell-truncate" title="${esc(m.content || '')}">${esc(m.content || '—')}</span></td>
+      <td>${badgeFor(m.status)}</td>
+    </tr>`;
+  });
+
+  renderRows('table-messages', 6, rows, 'No hay mensajes que coincidan.');
+}
+
+function clientSearch(customer) {
+  return customer ? `${customer.name || ''} ${customer.phone || ''}` : '';
+}
+
+async function loadMessages() {
+  if (!state.loaded.messages) loadingRow('table-messages', 6);
+  try {
+    const items = await apiFetch(`/api/messages?limit=${PAGE_SIZE}`);
+    state.messages = Array.isArray(items) ? items : [];
+    state.loaded.messages = true;
+    delete state.errors.messages;
+    renderMessages();
+  } catch (err) {
+    state.errors.messages = err.message;
+    setCount('#messages-count', 'No se pudieron cargar los mensajes');
+    errorRow('table-messages', 6, `No se pudieron cargar los mensajes: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------
+function renderLogs() {
+  if (!state.loaded.logs) return;
+  const { level, q } = state.filters.logs;
+  const query = q.trim().toLowerCase();
+
+  const filtered = state.logs.filter((l) => {
+    if (level !== 'ALL' && l.level !== level) return false;
+    if (!query) return true;
+    return [l.event_type, l.message, l.level]
+      .some((value) => String(value || '').toLowerCase().includes(query));
+  });
+
+  setCount(
+    '#logs-count',
+    query || level !== 'ALL'
+      ? `${filtered.length} de ${state.logs.length} eventos`
+      : `${state.logs.length} eventos recientes`
+  );
+
+  const rows = filtered.map((l) => `<tr>
+    <td>${timeHtml(l.created_at)}</td>
+    <td>${badgeFor(l.level)}</td>
+    <td>${esc(l.event_type || '—')}</td>
+    <td>${esc(l.message || '—')}</td>
+  </tr>`);
+
+  renderRows('table-logs', 4, rows, 'No hay eventos que coincidan.');
+}
+
 async function loadLogs() {
-  const tbody = document.querySelector('#table-logs tbody');
-  tbody.innerHTML = '<tr><td colspan="4">Cargando...</td></tr>';
+  if (!state.loaded.logs) loadingRow('table-logs', 4);
   try {
-    const logs = await apiFetch('/api/dashboard/logs?limit=100');
-    tbody.innerHTML = logs
-      .map(
-        (l) => `<tr>
-          <td>${esc(fmtDate(l.created_at))}</td>
-          <td><span class="badge-inline" style="background:${l.level === 'ERROR' ? '#ef4444' : l.level === 'WARN' ? '#f59e0b' : '#334155'}">${esc(l.level)}</span></td>
-          <td>${esc(l.event_type)}</td>
-          <td>${esc(l.message)}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="4">Sin registros todavia.</td></tr>';
+    const items = await apiFetch(`/api/dashboard/logs?limit=${PAGE_SIZE}`);
+    state.logs = Array.isArray(items) ? items : [];
+    state.loaded.logs = true;
+    delete state.errors.logs;
+    renderLogs();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4">Error: ${esc(err.message)}</td></tr>`;
+    state.errors.logs = err.message;
+    setCount('#logs-count', 'No se pudieron cargar los logs');
+    errorRow('table-logs', 4, `No se pudieron cargar los logs: ${err.message}`);
+  }
+  updateKpis();
+}
+
+// ---------------------------------------------------------------------
+// Actualización y pestañas
+// ---------------------------------------------------------------------
+function touchUpdated() {
+  state.lastUpdatedAt = Date.now();
+  updateLastUpdated();
+}
+
+function updateLastUpdated() {
+  const el = $('#last-updated');
+  if (!el) return;
+  if (!state.lastUpdatedAt) {
+    el.textContent = 'Sin actualizar';
+    return;
+  }
+  const seconds = Math.floor((Date.now() - state.lastUpdatedAt) / 1000);
+  el.textContent = seconds < 5 ? 'Actualizado ahora' : `Actualizado hace ${seconds} s`;
+}
+
+async function refreshAll() {
+  await loadCustomers();
+  await Promise.allSettled([
+    fetchHealth(),
+    fetchAutomationStatus(),
+    loadConversations(),
+    loadQueue(),
+    loadScheduled(),
+    loadMessages(),
+    loadLogs(),
+  ]);
+  updateKpis();
+  touchUpdated();
+}
+
+async function refreshActiveTab() {
+  switch (state.activeTab) {
+    case 'tab-dashboard':
+      await Promise.allSettled([fetchHealth(), fetchAutomationStatus()]);
+      break;
+    case 'tab-customers': return loadCustomers();
+    case 'tab-conversations': return loadConversations();
+    case 'tab-queue': return loadQueue();
+    case 'tab-scheduled': return loadScheduled();
+    case 'tab-messages': return loadMessages();
+    case 'tab-logs': return loadLogs();
+    default: return undefined;
+  }
+}
+
+function switchTab(tabId) {
+  state.activeTab = tabId;
+  $$('.tab-btn').forEach((btn) => {
+    const active = btn.dataset.tab === tabId;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+  });
+  $$('.tab-panel').forEach((panel) => panel.classList.toggle('hidden', panel.id !== tabId));
+  refreshActiveTab();
+}
+
+async function silentRefresh() {
+  if (!getToken() || state.refreshing || document.hidden) return;
+  state.refreshing = true;
+  try {
+    await refreshActiveTab();
+    updateKpis();
+    touchUpdated();
+  } finally {
+    state.refreshing = false;
   }
 }
 
 // ---------------------------------------------------------------------
-// Orquestacion
+// Eventos
 // ---------------------------------------------------------------------
-function refreshAll() {
-  fetchHealth();
-  fetchAutomationStatus();
-  loadCustomers();
-  loadConversations();
-  loadQueue();
-  loadScheduled();
-  loadLogs();
+function bindEvents() {
+  // Login / logout
+  $('#login-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('#btn-login');
+    const errorEl = $('#login-error');
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    button.disabled = true;
+    button.textContent = 'Entrando…';
+
+    try {
+      const data = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        skipAuthRedirect: true,
+        body: JSON.stringify({
+          email: $('#login-email').value.trim(),
+          password: $('#login-password').value,
+        }),
+      });
+      if (!data?.token) throw new Error('Respuesta de login inválida');
+      localStorage.setItem(TOKEN_KEY, data.token);
+      state.user = data.user || null;
+      $('#login-form').reset();
+      showApp();
+      if (state.user) renderUser();
+    } catch (err) {
+      errorEl.textContent = err.message || 'No se pudo iniciar sesión';
+      errorEl.classList.remove('hidden');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Entrar';
+    }
+  });
+
+  $('#btn-logout').addEventListener('click', async () => {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      /* el logout local se hace igual */
+    }
+    logout();
+  });
+
+  // Tema
+  $('#btn-theme').addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    applyTheme(current === 'light' ? 'dark' : 'light');
+  });
+
+  // Actualizar todo
+  $('#btn-refresh').addEventListener('click', async () => {
+    const button = $('#btn-refresh');
+    button.disabled = true;
+    await refreshAll();
+    button.disabled = false;
+    toast('Datos actualizados', 'success', 2200);
+  });
+
+  // Pestañas
+  $$('.tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // Botones "Actualizar" de cada sección
+  $$('[data-refresh]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const target = btn.dataset.refresh;
+      btn.disabled = true;
+      try {
+        if (target === 'customers') await loadCustomers();
+        else if (target === 'conversations') await loadConversations();
+        else if (target === 'queue') await loadQueue();
+        else if (target === 'scheduled') await loadScheduled();
+        else if (target === 'messages') await loadMessages();
+        else if (target === 'logs') await loadLogs();
+        touchUpdated();
+        toast('Sección actualizada', 'success', 1800);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
+  // Automatización
+  $$('[data-automation]').forEach((btn) => {
+    btn.addEventListener('click', () => runAutomationAction(btn.dataset.automation));
+  });
+
+  // WhatsApp
+  $('#btn-qr').addEventListener('click', connectWhatsapp);
+  $('#btn-disconnect').addEventListener('click', disconnectWhatsapp);
+
+  // Clientes
+  $('#form-customer').addEventListener('submit', createCustomer);
+  $('#search-customers').addEventListener('input', debounce((event) => {
+    state.filters.customers = event.target.value;
+    renderCustomers();
+  }, 180));
+
+  // Filtros
+  $('#filter-conversations').addEventListener('change', (event) => {
+    state.filters.conversations = event.target.value;
+    renderConversations();
+  });
+  $('#filter-queue').addEventListener('change', (event) => {
+    state.filters.queue = event.target.value;
+    renderQueue();
+  });
+  $('#filter-scheduled').addEventListener('change', (event) => {
+    state.filters.scheduled = event.target.value;
+    renderScheduled();
+  });
+  $('#filter-messages').addEventListener('change', (event) => {
+    state.filters.messages.direction = event.target.value;
+    renderMessages();
+  });
+  $('#search-messages').addEventListener('input', debounce((event) => {
+    state.filters.messages.q = event.target.value;
+    renderMessages();
+  }, 180));
+  $('#filter-logs').addEventListener('change', (event) => {
+    state.filters.logs.level = event.target.value;
+    renderLogs();
+  });
+  $('#search-logs').addEventListener('input', debounce((event) => {
+    state.filters.logs.q = event.target.value;
+    renderLogs();
+  }, 180));
+
+  // Cola
+  $$('[data-queue]').forEach((btn) => {
+    btn.addEventListener('click', () => runQueueAction(btn.dataset.queue));
+  });
+
+  // Programados
+  $('#form-scheduled').addEventListener('submit', createScheduledMessage);
+  $('#sched-customer').addEventListener('change', (event) => {
+    const customer = customerById(event.target.value);
+    if (customer) $('#sched-phone').value = customer.phone;
+  });
+
+  // Acciones de tablas (delegación)
+  $('#table-conversations tbody').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-conv-action]');
+    if (btn) handleConversationAction(btn.dataset.convAction, btn.dataset.id);
+  });
+
+  $('#table-scheduled tbody').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-sched-action]');
+    if (btn && btn.dataset.schedAction === 'cancel') cancelScheduledMessage(btn.dataset.id);
+  });
+
+  // Modal
+  $$('[data-close-modal]').forEach((node) => node.addEventListener('click', closeModal));
+  $('#modal-actions').addEventListener('click', async (event) => {
+    const btn = event.target.closest('[data-modal-action]');
+    if (!btn || !state.modalConversationId) return;
+    const action = btn.dataset.modalAction;
+    if (action === 'close' && !window.confirm('¿Cerrar esta conversación?')) return;
+    try {
+      await updateConversation(state.modalConversationId, action === 'human' ? 'HUMAN' : 'CLOSED');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && getToken()) silentRefresh();
+  });
 }
 
-if (getAuthToken()) {
-  showApp();
-} else {
-  showLogin();
+// ---------------------------------------------------------------------
+// Arranque
+// ---------------------------------------------------------------------
+function init() {
+  initTheme();
+  bindEvents();
+  resetScheduleDate();
+  renderUser();
+  setInterval(updateLastUpdated, 1000);
+  setInterval(silentRefresh, 20000);
+
+  if (getToken()) {
+    showApp();
+  } else {
+    showLogin();
+  }
 }
 
-setInterval(() => {
-  if (getAuthToken()) fetchHealth();
-}, 10000);
+init();

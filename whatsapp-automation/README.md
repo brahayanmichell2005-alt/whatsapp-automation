@@ -35,6 +35,20 @@ vercel.json             Configuración de Vercel
 
 ---
 
+## Panel web (`public/`)
+
+- **Estado**: indicadores de clientes, conversaciones y cola, salud de backend/base de datos/WhatsApp, conexión por QR o código de vinculación y control de la automatización.
+- **Clientes**: búsqueda por teléfono, nombre o correo, y alta de clientes.
+- **Conversaciones**: filtro por estado, historial de la conversación y acciones para derivar a atención humana o cerrar.
+- **Cola**: filtro por estado y pausa, reanudación o detención.
+- **Programados**: alta y cancelación de mensajes programados.
+- **Mensajes**: historial reciente con filtro por dirección y búsqueda.
+- **Errores / Logs**: filtro por nivel y búsqueda por evento o mensaje.
+
+El panel incluye tema claro/oscuro, refresco automático cada 20 segundos, búsquedas sin recargar y avisos en pantalla.
+
+---
+
 ## Despliegue paso a paso
 
 ### 1. Supabase (base de datos)
