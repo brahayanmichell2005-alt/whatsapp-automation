@@ -49,12 +49,26 @@ function makeWorld(extra = {}) {
     markProcessing: async (id) => { rec('markProcessing'); w.queue.find((i) => i.id === id).status = 'PROCESSING'; },
     markSent: async (id) => { rec('markSent'); w.queue.find((i) => i.id === id).status = 'SENT'; },
     markFailed: async (id) => { rec('markFailed'); w.queue.find((i) => i.id === id).status = 'FAILED'; },
+    markUncertain: async (id) => { rec('markUncertain'); const it = w.queue.find((i) => i.id === id); it.status = 'UNCERTAIN'; },
+    markCancelled: async (id) => { rec('markCancelled'); const it = w.queue.find((i) => i.id === id); it.status = 'CANCELLED'; },
+    isQueueItemCurrent: async () => {
+      rec('isQueueItemCurrent');
+      if (Array.isArray(w.queueItemCurrentResults) && w.queueItemCurrentResults.length) {
+        return w.queueItemCurrentResults.shift();
+      }
+      return w.queueItemCurrent !== false;
+    },
     incrementAttempt: async (id) => { rec('incrementAttempt'); const it = w.queue.find((i) => i.id === id); it.status = 'PENDING'; it.attempts += 1; },
     requeueStale: async () => {
       rec('requeueStale');
       if (w.requeueError) throw new Error(w.requeueError);
       return 0;
     },
+  });
+  inject('models/responseJob.model.js', {
+    markSentFromQueue: async (id) => { rec(`job:markSentFromQueue:${id}`); if (w.jobSyncError) throw new Error('db'); },
+    markFailedFromQueue: async (id) => { rec(`job:markFailedFromQueue:${id}`); if (w.jobSyncError) throw new Error('db'); },
+    markUncertainFromQueue: async (id) => { rec(`job:markUncertainFromQueue:${id}`); if (w.jobSyncError) throw new Error('db'); },
   });
   inject('models/customer.model.js', {
     findById: async (id) => {
@@ -262,6 +276,131 @@ describe('Worker de envio', () => {
   });
 });
 
+describe('Entregas inciertas y respuestas invalidadas', () => {
+  const queued = (id, extra = {}) => ({
+    ...item(id, 0),
+    response_job_id: 55,
+    response_generation: 2,
+    ...extra,
+  });
+
+  test('clasifica timeout, 5xx y red como inciertos; 4xx como fallo confirmado', () => {
+    const { worker } = fresh();
+    const network = new Error('timeout');
+    network.code = 'ECONNABORTED';
+    assert.deepEqual(worker.classifySendError(network), { uncertain: true, reason: 'red_ECONNABORTED' });
+
+    const server = new Error('upstream');
+    server.upstreamStatus = 502;
+    assert.equal(worker.classifySendError(server).uncertain, true);
+
+    const client = new Error('numero invalido');
+    client.upstreamStatus = 400;
+    assert.deepEqual(worker.classifySendError(client), { uncertain: false, reason: 'fallo_confirmado' });
+
+    const hosting = new Error('application not found');
+    hosting.code = 'EVOLUTION_UPSTREAM_DOWN';
+    assert.equal(worker.classifySendError(hosting).uncertain, false);
+
+    const plain = new Error('boom');
+    assert.equal(worker.classifySendError(plain).uncertain, false);
+  });
+
+  test('un timeout del conector deja el mensaje UNCERTAIN y NO lo reintenta', async () => {
+    const timeout = new Error('timeout del conector');
+    timeout.code = 'ECONNABORTED';
+    const { world, worker } = fresh({}, { send: async () => { throw timeout; } });
+    world.queue = [queued(1)];
+
+    const r = await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(r.sent, 0);
+    assert.equal(world.queue[0].status, 'UNCERTAIN');
+    assert.equal(world.count('markUncertain'), 1);
+    assert.equal(world.count('incrementAttempt'), 0, 'no se reintenta a ciegas');
+    assert.equal(world.count('markFailed'), 0);
+    assert.equal(world.calls.includes('job:markUncertainFromQueue:1'), true);
+    assert.equal(world.count('log:queue_send_uncertain'), 1);
+    assert.equal(world.count('slotRelease'), 1);
+  });
+
+  test('un 5xx del conector tambien es incierto', async () => {
+    const server = new Error('bad gateway');
+    server.upstreamStatus = 502;
+    const { world, worker } = fresh({}, { send: async () => { throw server; } });
+    world.queue = [queued(1)];
+
+    await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(world.queue[0].status, 'UNCERTAIN');
+    assert.equal(world.count('incrementAttempt'), 0);
+  });
+
+  test('un 4xx confirmado si se reintenta', async () => {
+    const client = new Error('numero invalido');
+    client.upstreamStatus = 400;
+    const { world, worker } = fresh({}, { send: async () => { throw client; } });
+    world.queue = [queued(1)];
+
+    await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(world.count('incrementAttempt'), 1);
+    assert.equal(world.count('markUncertain'), 0);
+    assert.equal(world.calls.includes('job:markUncertainFromQueue:1'), false);
+  });
+
+  test('una respuesta invalidada antes del envio se cancela y no sale', async () => {
+    const { world, worker } = fresh({}, { queueItemCurrent: false });
+    world.queue = [queued(1)];
+
+    const r = await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(world.count('send'), 0);
+    assert.equal(world.queue[0].status, 'CANCELLED');
+    assert.equal(world.count('markCancelled'), 1);
+    assert.equal(world.count('markSent'), 0);
+    assert.equal(world.count('log:queue_send_stale_cancelled'), 1);
+    assert.equal(r.sent, 0);
+  });
+
+  test('si el trabajo cambia durante la espera, se cancela justo antes de enviar', async () => {
+    const { world, worker } = fresh(
+      { MIN_DELAY_SECONDS: 1, MAX_DELAY_SECONDS: 1 },
+      { queueItemCurrentResults: [true, false] }
+    );
+    world.settings.worker_last_send_at = String(Date.now() - 800);
+    world.queue = [queued(1)];
+
+    await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(world.count('markProcessing'), 1);
+    assert.equal(world.count('send'), 0);
+    assert.equal(world.count('markCancelled'), 1);
+    assert.equal(world.queue[0].status, 'CANCELLED');
+  });
+
+  test('un envio correcto sincroniza el trabajo logico a SENT', async () => {
+    const { world, worker } = fresh();
+    world.queue = [queued(1)];
+
+    await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(world.queue[0].status, 'SENT');
+    assert.equal(world.calls.includes('job:markSentFromQueue:1'), true);
+  });
+
+  test('si falla la sincronizacion del trabajo, el mensaje enviado no se reintenta', async () => {
+    const { world, worker } = fresh({}, { jobSyncError: true });
+    world.queue = [queued(1)];
+
+    const r = await worker.tick({ budgetMs: 45000 });
+
+    assert.equal(r.sent, 1);
+    assert.equal(world.queue[0].status, 'SENT');
+    assert.equal(world.count('incrementAttempt'), 0);
+  });
+});
+
 describe('Limites de envio (rateLimiter.service)', () => {
   test('las claves de ventana usan fecha ISO con separadores', async () => {
     setEnv(BASE_ENV);
@@ -345,22 +484,30 @@ describe('Proteccion de /api/cron (cronAuth)', () => {
 });
 
 describe('Controlador de cron', () => {
-  test('ejecuta scheduler y luego el worker con el presupuesto configurado', async () => {
+  test('ejecuta scheduler, respuestas y luego el worker con el presupuesto restante', async () => {
     setEnv({ ...BASE_ENV, CRON_BUDGET_MS: 30000 });
     const order = [];
     inject('services/scheduler.service.js', { tick: async () => { order.push('scheduler'); return 2; } });
+    inject('services/responseProcessing.service.js', {
+      tick: async ({ budgetMs }) => { order.push(`responses:${budgetMs}`); return { queued: 1 }; },
+    });
     inject('workers/message.worker.js', { tick: async ({ budgetMs }) => { order.push(`worker:${budgetMs}`); return { sent: 1 }; } });
     let body;
     await load('controllers/cron.controller.js').tick({}, { json: (b) => { body = b; } }, (e) => { throw e; });
-    assert.deepEqual(order, ['scheduler', 'worker:30000']);
+    assert.equal(order[0], 'scheduler');
+    assert.match(order[1], /^responses:\d+$/);
+    assert.match(order[2], /^worker:\d+$/);
+    assert.equal(order.length, 3);
     assert.equal(body.ok, true);
     assert.equal(body.scheduledMoved, 2);
+    assert.deepEqual(body.responses, { queued: 1 });
     assert.deepEqual(body.worker, { sent: 1 });
   });
 
   test('si algo falla, delega el error al errorHandler', async () => {
     setEnv(BASE_ENV);
     inject('services/scheduler.service.js', { tick: async () => { throw new Error('x'); } });
+    inject('services/responseProcessing.service.js', { tick: async () => ({}) });
     inject('workers/message.worker.js', { tick: async () => ({}) });
     let received;
     await load('controllers/cron.controller.js').tick({}, { json: () => {} }, (e) => { received = e; });

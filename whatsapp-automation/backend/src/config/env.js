@@ -117,6 +117,25 @@ const env = {
 
   PAUSE_QUEUE: toBool(process.env.PAUSE_QUEUE, false),
 
+  // --- Cola de respuestas automaticas (tiempos por cliente) ---
+  // Valores usados solo si la fila global de response_settings todavia no
+  // existe (primer arranque antes de aplicar la migracion). El panel los
+  // reemplaza con lo guardado en PostgreSQL.
+  RESPONSE_MIN_DELAY_SECONDS: toInt(process.env.RESPONSE_MIN_DELAY_SECONDS, 5),
+  RESPONSE_MAX_DELAY_SECONDS: toInt(process.env.RESPONSE_MAX_DELAY_SECONDS, 15),
+  RESPONSE_GROUPING_WINDOW_SECONDS: toInt(process.env.RESPONSE_GROUPING_WINDOW_SECONDS, 4),
+  RESPONSE_MAX_CONCURRENT: toInt(process.env.RESPONSE_MAX_CONCURRENT, 2),
+  RESPONSE_MAX_ATTEMPTS: toInt(process.env.RESPONSE_MAX_ATTEMPTS, 3),
+  // Presupuesto de una ejecucion de la cola de respuestas (cron o webhook).
+  RESPONSE_BUDGET_MS: toInt(process.env.RESPONSE_BUDGET_MS, 40000),
+  // En el webhook se espera un poco para respetar el tiempo configurado sin
+  // depender solo del cron (que en el plan gratuito corre cada minuto).
+  RESPONSE_INLINE_WAIT_MS: toInt(process.env.RESPONSE_INLINE_WAIT_MS, 30000),
+  RESPONSE_INLINE_BUDGET_MS: toInt(process.env.RESPONSE_INLINE_BUDGET_MS, 45000),
+  // Un trabajo en pausa demasiado viejo se cancela al reanudar: no se envian
+  // respuestas de conversaciones que ya no son relevantes.
+  RESPONSE_MAX_AGE_SECONDS: toInt(process.env.RESPONSE_MAX_AGE_SECONDS, 600),
+
   JWT_SECRET,
   // En produccion NO hay credenciales de admin por defecto: si no las defines,
   // simplemente no se crea el administrador inicial.

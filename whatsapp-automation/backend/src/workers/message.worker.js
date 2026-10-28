@@ -15,6 +15,7 @@
 const env = require('../config/env');
 const logger = require('../utils/logger');
 const queueModel = require('../models/messageQueue.model');
+const responseJobModel = require('../models/responseJob.model');
 const customerModel = require('../models/customer.model');
 const messageModel = require('../models/message.model');
 const conversationModel = require('../models/conversation.model');
@@ -45,6 +46,52 @@ function randomDelayMs() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Decide si un error de envio deja el mensaje en estado incierto. Un
+// timeout, un 5xx o un corte de red no permiten saber si WhatsApp recibio el
+// mensaje; en ese caso NO se reintenta para no duplicarlo. Un 4xx (numero
+// invalido, rechazo explicito) o un error de configuracion si es un fallo
+// confirmado y puede reintentarse.
+const NETWORK_CODES = [
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EPIPE',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+];
+
+function classifySendError(err) {
+  const code = String((err && err.code) || '');
+  const upstream = Number(err && err.upstreamStatus) || null;
+
+  // El hosting responde 404 "Application not found": el mensaje nunca llego.
+  if (code === 'EVOLUTION_UPSTREAM_DOWN') {
+    return { uncertain: false, reason: 'evolution_no_disponible' };
+  }
+  if (err && err.uncertain === true) return { uncertain: true, reason: 'marcado_incierto' };
+  if (NETWORK_CODES.includes(code)) return { uncertain: true, reason: `red_${code}` };
+  if (upstream && upstream >= 500) return { uncertain: true, reason: `http_${upstream}` };
+  if (upstream === 408) return { uncertain: true, reason: 'http_408' };
+  // 502 sin estado del upstream = no hubo respuesta HTTP del conector.
+  if (err && err.status === 502 && !upstream) return { uncertain: true, reason: 'sin_respuesta' };
+  if (err && err.status === 504) return { uncertain: true, reason: 'timeout' };
+  return { uncertain: false, reason: 'fallo_confirmado' };
+}
+
+// Mantiene sincronizado el trabajo logico con el resultado del envio. Un
+// fallo aqui no debe convertir un envio exitoso en error.
+async function syncJob(action, ...args) {
+  try {
+    return await responseJobModel[action](...args);
+  } catch (err) {
+    logger.error({ err: err.message, action }, 'No se pudo actualizar el trabajo de respuesta tras el envio');
+    return null;
+  }
 }
 
 async function isAutomationActive() {
@@ -81,6 +128,23 @@ async function processOne(item, { deadline = null } = {}) {
       eventType: 'queue_send',
       level: 'WARN',
       message: `Mensaje ${item.id} cancelado: cliente ${item.phone} esta en opt-out`,
+    });
+    return 'failed';
+  }
+
+  // 3.5. El trabajo de respuesta sigue vigente. Si llego un mensaje nuevo o
+  // una persona tomo la conversacion, este envio ya no debe salir aunque el
+  // texto ya estuviera generado y encolado.
+  if (
+    item.response_job_id
+    && !(await queueModel.isQueueItemCurrent(item.id, item.response_job_id, item.response_generation))
+  ) {
+    await queueModel.markCancelled(item.id, 'Respuesta invalidada antes del envio');
+    await logModel.record({
+      eventType: 'queue_send_stale_cancelled',
+      level: 'WARN',
+      message: `Mensaje ${item.id} cancelado: la respuesta ya no era la vigente`,
+      metadata: { responseJobId: item.response_job_id },
     });
     return 'failed';
   }
@@ -128,6 +192,22 @@ async function processOne(item, { deadline = null } = {}) {
 
     if (waitMs > 0) await sleep(waitMs);
 
+    // La espera pudo durar varios segundos: se vuelve a comprobar la vigencia
+    // justo antes de enviar para no responder con texto viejo.
+    if (
+      item.response_job_id
+      && !(await queueModel.isQueueItemCurrent(item.id, item.response_job_id, item.response_generation))
+    ) {
+      await queueModel.markCancelled(item.id, 'Respuesta invalidada durante la espera');
+      await logModel.record({
+        eventType: 'queue_send_stale_cancelled',
+        level: 'WARN',
+        message: `Mensaje ${item.id} cancelado tras la espera: habia un mensaje mas reciente o atencion humana`,
+        metadata: { responseJobId: item.response_job_id },
+      });
+      return 'failed';
+    }
+
     // 8. Envio. Los chats @lid no tienen un telefono real: se usa el JID
     // completo guardado en el cliente; el resto sigue enviando por telefono.
     const customer = await customerModel.findById(item.customer_id);
@@ -139,6 +219,9 @@ async function processOne(item, { deadline = null } = {}) {
     // PENDING: ya salio a WhatsApp y reintentarlo duplicaria el envio.
     try {
       await queueModel.markSent(item.id);
+      // El trabajo logico pasa a SENT. Es idempotente y solo afecta a la
+      // fila QUEUED de este envio.
+      if (item.response_job_id) await syncJob('markSentFromQueue', item.id);
       await rateLimiter.recordSend();
 
       const conversation = await conversationModel.findOrCreateOpenByCustomer(item.customer_id);
@@ -192,6 +275,7 @@ async function processOne(item, { deadline = null } = {}) {
       } catch (markErr) {
         logger.error({ err: markErr.message, id: item.id }, 'No se pudo marcar como SENT');
       }
+      if (item.response_job_id) await syncJob('markSentFromQueue', item.id);
       if (scheduledId) {
         try {
           await scheduledModel.markSent(scheduledId);
@@ -202,9 +286,30 @@ async function processOne(item, { deadline = null } = {}) {
       return 'sent';
     }
 
+    // Entrega incierta (timeout, 5xx o corte de red): no se sabe si WhatsApp
+    // recibio el mensaje. Se registra y NO se reintenta automaticamente.
+    const classification = classifySendError(err);
+    if (classification.uncertain) {
+      try {
+        await queueModel.markUncertain(item.id, err.message);
+      } catch (markErr) {
+        logger.error({ err: markErr.message, id: item.id }, 'No se pudo marcar como UNCERTAIN');
+      }
+      if (item.response_job_id) await syncJob('markUncertainFromQueue', item.id, err.message);
+      await logModel.record({
+        eventType: 'queue_send_uncertain',
+        level: 'ERROR',
+        message: `Entrega incierta del mensaje ${item.id}: ${err.message}`,
+        metadata: { reason: classification.reason, responseJobId: item.response_job_id || null },
+      });
+      await anomalyDetection.checkAfterFailure('queue_send_error');
+      return 'failed';
+    }
+
     let outcome = 'retry';
     if (item.attempts + 1 >= env.MAX_RETRIES) {
       await queueModel.markFailed(item.id, err.message);
+      if (item.response_job_id) await syncJob('markFailedFromQueue', item.id, err.message);
       if (scheduledId) {
         try {
           await scheduledModel.markFailed(scheduledId, err.message);
@@ -329,4 +434,4 @@ if (require.main === module) {
   loop();
 }
 
-module.exports = { processOne, tick, loop, shutdown };
+module.exports = { processOne, tick, loop, shutdown, classifySendError };

@@ -58,6 +58,40 @@ async function updateStatus(id, status, { assignedTo = undefined } = {}) {
   return rows[0] || null;
 }
 
+// Atencion humana: el trabajador toma el control. El bot queda desactivado
+// para esa conversacion hasta que se reactive manualmente.
+async function takeOver(id, { userId = null, reason = null } = {}) {
+  const { rows } = await pool.query(
+    `UPDATE conversations
+     SET status = 'HUMAN',
+         bot_enabled = FALSE,
+         human_taken_over_at = NOW(),
+         human_taken_over_by = $2,
+         human_takeover_reason = $3
+     WHERE id = $1
+     RETURNING *`,
+    [id, userId, reason]
+  );
+  return rows[0] || null;
+}
+
+// Reactivacion manual del bot: vuelve a OPEN y limpia la marca humana.
+async function releaseBot(id) {
+  const { rows } = await pool.query(
+    `UPDATE conversations
+     SET status = 'OPEN',
+         bot_enabled = TRUE,
+         human_taken_over_at = NULL,
+         human_taken_over_by = NULL,
+         human_takeover_reason = NULL,
+         closed_at = NULL
+     WHERE id = $1
+     RETURNING *`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 // NULLS LAST: en MySQL las conversaciones sin mensajes quedaban al final del
 // orden descendente; en PostgreSQL quedarian primero si no se indica.
 // Lista para la vista de chat en vivo: incluye el nombre/telefono del
@@ -102,6 +136,8 @@ module.exports = {
   findOrCreateOpenByCustomer,
   touchLastMessage,
   updateStatus,
+  takeOver,
+  releaseBot,
   list,
   listForChat,
 };

@@ -7,7 +7,7 @@
   <meta name="description" content="Panel de administración de WhatsApp Automation: estado, clientes, conversaciones, cola y mensajes programados." />
   <title>WhatsApp Automation · Panel</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2325d366'/%3E%3Cpath d='M9 8h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z' fill='%23052e16'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=3" />
+  <link rel="stylesheet" href="css/style.css?v=4" />
   <script>
     // Aplica el tema guardado antes del primer pintado (evita el destello).
     try {
@@ -102,6 +102,10 @@
       <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-queue">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="3"/></svg>
         Cola
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-responses">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/><path d="M7 3.3A9 9 0 0 0 3.3 7M16.7 3.3A9 9 0 0 1 20.7 7"/></svg>
+        Respuestas
       </button>
       <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-scheduled">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -276,7 +280,7 @@
 
         <div class="table-wrap card">
           <table class="data-table" id="table-customers">
-            <thead><tr><th>Teléfono</th><th>Nombre</th><th>Estado</th><th>Interés</th><th>Último mensaje</th></tr></thead>
+            <thead><tr><th>Teléfono</th><th>Nombre</th><th>Estado</th><th>Interés</th><th>Último mensaje</th><th class="col-actions">Tiempo de respuesta</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -349,6 +353,173 @@
             <tbody></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- ============ CONTROL DE RESPUESTAS ============ -->
+      <section id="tab-responses" class="tab-panel hidden" role="tabpanel">
+        <div class="section-head">
+          <div>
+            <h2>Control de respuestas automáticas</h2>
+            <p class="muted" id="response-summary">Cargando…</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" data-refresh="responses">Actualizar</button>
+        </div>
+
+        <div id="response-alerts" class="alerts" aria-live="polite"></div>
+
+        <div class="kpi-grid kpi-grid-5">
+          <article class="kpi">
+            <span class="kpi-label">Pendientes</span>
+            <strong class="kpi-value" id="resp-kpi-pending">–</strong>
+            <span class="kpi-hint">esperando su turno</span>
+          </article>
+          <article class="kpi">
+            <span class="kpi-label">Procesando</span>
+            <strong class="kpi-value" id="resp-kpi-processing">–</strong>
+            <span class="kpi-hint">generando respuesta</span>
+          </article>
+          <article class="kpi">
+            <span class="kpi-label">Enviadas hoy</span>
+            <strong class="kpi-value" id="resp-kpi-sent">–</strong>
+            <span class="kpi-hint">respuestas completadas</span>
+          </article>
+          <article class="kpi">
+            <span class="kpi-label">Errores hoy</span>
+            <strong class="kpi-value" id="resp-kpi-failed">–</strong>
+            <span class="kpi-hint">fallos confirmados</span>
+          </article>
+          <article class="kpi">
+            <span class="kpi-label">Inciertas</span>
+            <strong class="kpi-value" id="resp-kpi-uncertain">–</strong>
+            <span class="kpi-hint">no se reintentan solas</span>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <section class="card">
+            <header class="card-head">
+              <h2>Configuración global</h2>
+              <span class="pill" id="response-status-pill">–</span>
+            </header>
+            <form id="form-response" class="form-grid form-grid-3" novalidate>
+              <label class="check-field field-wide">
+                <input type="checkbox" id="response-enabled" />
+                <span>Respuestas automáticas activas</span>
+              </label>
+              <label class="field">
+                <span>Espera mínima (s)</span>
+                <input id="response-min" type="number" min="0" max="600" step="1" required />
+                <small class="field-hint">0 a 600 s</small>
+              </label>
+              <label class="field">
+                <span>Espera máxima (s)</span>
+                <input id="response-max" type="number" min="0" max="900" step="1" required />
+                <small class="field-hint">0 a 900 s</small>
+              </label>
+              <label class="field">
+                <span>Agrupar mensajes (s)</span>
+                <input id="response-grouping" type="number" min="0" max="120" step="1" required />
+                <small class="field-hint">reinicia la espera con cada mensaje</small>
+              </label>
+              <label class="field">
+                <span>Respuestas simultáneas</span>
+                <input id="response-concurrency" type="number" min="1" max="10" step="1" required />
+                <small class="field-hint">1 a 10 conversaciones</small>
+              </label>
+              <label class="field">
+                <span>Alerta tras N errores</span>
+                <input id="response-threshold" type="number" min="1" max="100" step="1" required />
+                <small class="field-hint">por día</small>
+              </label>
+              <div class="form-actions field-wide">
+                <button type="submit" class="btn btn-primary" id="btn-save-response">Guardar configuración</button>
+              </div>
+            </form>
+
+            <div class="btn-row response-controls">
+              <button class="btn btn-primary btn-sm" data-response-action="activate">Activar / reanudar</button>
+              <button class="btn btn-ghost btn-sm" data-response-action="pause">Pausar</button>
+              <button class="btn btn-danger btn-sm" data-response-action="stop">Detención de emergencia</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <header class="card-head">
+              <h2>Cómo funciona</h2>
+              <span class="pill" id="response-mode-pill">–</span>
+            </header>
+            <ul class="status-list response-rules">
+              <li>
+                <span class="status-dot up"></span>
+                <div class="status-text">
+                  <p class="status-name">Un mensaje, una respuesta</p>
+                  <p class="status-detail">Los mensajes seguidos del mismo cliente se agrupan y reciben una sola respuesta contextual.</p>
+                </div>
+              </li>
+              <li>
+                <span class="status-dot up"></span>
+                <div class="status-text">
+                  <p class="status-name">Espera configurable</p>
+                  <p class="status-detail">Cada cliente puede tener su propio tiempo; si no tiene configuración se usan los valores globales.</p>
+                </div>
+              </li>
+              <li>
+                <span class="status-dot warn"></span>
+                <div class="status-text">
+                  <p class="status-name">Sin respuestas viejas</p>
+                  <p class="status-detail">Si llega un mensaje nuevo o una persona toma la conversación, la respuesta pendiente se invalida.</p>
+                </div>
+              </li>
+              <li>
+                <span class="status-dot up"></span>
+                <div class="status-text">
+                  <p class="status-name">Sobrevive reinicios</p>
+                  <p class="status-detail">La cola vive en PostgreSQL: un reinicio no pierde trabajos pendientes ni duplica envíos.</p>
+                </div>
+              </li>
+            </ul>
+            <p class="muted" id="response-limits">Los límites se validan también en el servidor.</p>
+          </section>
+        </div>
+
+        <div class="toolbar">
+          <label class="field field-inline">
+            <span>Estado del trabajo</span>
+            <select id="filter-response-jobs">
+              <option value="ALL">Todos</option>
+              <option value="PENDING">Pendientes</option>
+              <option value="PROCESSING">Procesando</option>
+              <option value="QUEUED">En cola de envío</option>
+              <option value="PAUSED">Pausados</option>
+              <option value="SENT">Enviados</option>
+              <option value="FAILED">Fallidos</option>
+              <option value="UNCERTAIN">Inciertos</option>
+              <option value="CANCELLED">Cancelados</option>
+            </select>
+          </label>
+          <button class="btn btn-ghost btn-sm" data-refresh="response-jobs">Actualizar trabajos</button>
+          <span class="muted" id="response-jobs-count">—</span>
+        </div>
+
+        <div class="table-wrap card">
+          <table class="data-table" id="table-response-jobs">
+            <thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Programada</th><th>Intentos</th><th>Respuesta / error</th><th class="col-actions">Acciones</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <section class="card">
+          <header class="card-head">
+            <h2>Historial de cambios</h2>
+            <span class="muted" id="response-history-count">–</span>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table" id="table-response-history">
+              <thead><tr><th>Cuándo</th><th>Alcance</th><th>Acción</th><th>Usuario</th><th>Detalle</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
       <!-- ============ PROGRAMADOS ============ -->
@@ -497,8 +668,72 @@
     </div>
   </div>
 
+  <!-- ================= MODAL: TIEMPO DE RESPUESTA DEL CLIENTE ================= -->
+  <div id="customer-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="customer-modal-title">
+    <div class="modal-backdrop" data-close-customer-modal></div>
+    <div class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2 id="customer-modal-title">Tiempo de respuesta</h2>
+          <p class="muted" id="customer-modal-subtitle">—</p>
+        </div>
+        <button class="btn btn-ghost btn-icon" data-close-customer-modal aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </header>
+
+      <div class="customer-modal-body">
+        <p class="muted" id="customer-response-source">—</p>
+
+        <form id="form-customer-response" class="form-grid" novalidate>
+          <label class="check-field field-wide">
+            <input type="checkbox" id="cres-enabled" />
+            <span>Responder automáticamente a este cliente</span>
+          </label>
+          <label class="field">
+            <span>Espera mínima (s)</span>
+            <input id="cres-min" type="number" min="0" max="600" step="1" required />
+          </label>
+          <label class="field">
+            <span>Espera máxima (s)</span>
+            <input id="cres-max" type="number" min="0" max="900" step="1" required />
+          </label>
+          <label class="field">
+            <span>Prioridad (0 a 10)</span>
+            <input id="cres-priority" type="number" min="0" max="10" step="1" required />
+          </label>
+          <label class="check-field">
+            <input type="checkbox" id="cres-random" />
+            <span>Variación aleatoria</span>
+          </label>
+          <label class="check-field">
+            <input type="checkbox" id="cres-paused" />
+            <span>Pausar solo este cliente</span>
+          </label>
+
+          <div class="form-actions field-wide">
+            <button type="submit" class="btn btn-primary" id="btn-save-customer-response">Guardar</button>
+            <button type="button" class="btn btn-ghost" data-cust-response="reset">Usar valores globales</button>
+          </div>
+        </form>
+
+        <section class="human-box">
+          <header class="card-head">
+            <h3 class="card-title">Atención humana</h3>
+            <span class="pill" id="customer-human-pill">–</span>
+          </header>
+          <p class="muted" id="customer-human-status">—</p>
+          <div class="btn-row">
+            <button type="button" class="btn btn-ghost btn-sm" data-cust-response="takeover">Tomar control</button>
+            <button type="button" class="btn btn-primary btn-sm" data-cust-response="release">Reactivar bot</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
-  <script src="js/app.js?v=3"></script>
+  <script src="js/app.js?v=4"></script>
 </body>
 </html>

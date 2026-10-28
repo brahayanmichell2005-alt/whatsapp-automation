@@ -87,6 +87,8 @@ const CASES = {
     findOrCreateOpenByCustomer: [[1]],
     touchLastMessage: [[1]],
     updateStatus: [[1, 'CLOSED'], [1, 'HUMAN', { assignedTo: 3 }], [1, 'OPEN', { assignedTo: null }]],
+    takeOver: [[1], [1, { userId: 3, reason: 'manual' }]],
+    releaseBot: [[1]],
     list: [[{ status: 'OPEN', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
     listForChat: [[{ limit: 5, offset: 0 }], [undefined]],
   },
@@ -103,18 +105,63 @@ const CASES = {
   },
   'models/messageQueue.model.js': {
     findById: [[1]],
-    enqueue: [[{ customerId: 1, phone: '519', message: 'hola' }], [{ customerId: 1, phone: '519', message: 'hola', scheduledAt: NOW }]],
+    findByIdempotencyKey: [['respjob:1:gen:1']],
+    isQueueItemCurrent: [[1, 2, 3]],
+    enqueue: [[{ customerId: 1, phone: '519', message: 'hola' }], [{ customerId: 1, phone: '519', message: 'hola', scheduledAt: NOW }], [{ customerId: 1, phone: '519', message: 'hola', idempotencyKey: 'k', responseJobId: 2, responseGeneration: 1 }]],
     findNextBatch: [[3]],
     markProcessing: [[1]],
     markSent: [[1]],
     markFailed: [[1, 'boom']],
+    markUncertain: [[1, 'timeout']],
+    markCancelled: [[1, 'stale']],
     incrementAttempt: [[1, 'boom']],
     cancelPendingByCustomer: [[1]],
+    cancelPendingByConversation: [[1]],
     requeueStale: [[5]],
     pauseAllPending: [[]],
     resumeAllPaused: [[]],
     cancelAllOpen: [[]],
     list: [[{ status: 'PENDING', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
+  },
+  'models/responseSettings.model.js': {
+    ensureGlobal: [[]],
+    updateGlobal: [[{ enabled: true, min_delay_seconds: 5 }], [{}, { actorId: 2 }]],
+    recordHistory: [[{ scope: 'GLOBAL', action: 'UPDATE_SETTINGS', actorId: 1, previous: { a: 1 }, next: { a: 2 }, reason: 'x' }], [{ scope: 'SYSTEM', action: 'tick' }]],
+    listHistory: [[{ limit: 10, offset: 0 }], [undefined]],
+  },
+  'models/customerResponseSetting.model.js': {
+    findByCustomer: [[1]],
+    upsert: [[1, { enabled: true, min_delay_seconds: 5 }], [1, { paused: true }, { actorId: 2 }]],
+    remove: [[1]],
+    touchLastReply: [[1]],
+    list: [[]],
+  },
+  'models/responseJob.model.js': {
+    schedule: [[{ customerId: 1, conversationId: 2, latestInboundMessageId: 3, idempotencyKey: 'k', priority: 1, dueAt: NOW, maxAttempts: 3 }]],
+    findById: [[1]],
+    findOpenByConversation: [[2]],
+    findDue: [[3]],
+    findEarliestDue: [[]],
+    claim: [[1, 120]],
+    stillCurrent: [[1, 2]],
+    markQueued: [[1, 2, 3, 'texto']],
+    releaseClaim: [[1, 2, 'pausa']],
+    markSentFromQueue: [[1]],
+    markFailedFromQueue: [[1, 'boom']],
+    markUncertainFromQueue: [[1, 'timeout']],
+    markCancelled: [[1, 'motivo']],
+    markCancelledGeneration: [[1, 2, 'motivo']],
+    cancelOpenByConversation: [[1, 'motivo']],
+    cancelOpenByCustomer: [[1, 'motivo']],
+    cancelAllOpen: [['motivo']],
+    pauseOpen: [[]],
+    cancelStalePaused: [[600]],
+    resumePaused: [[1]],
+    requeueStale: [[5]],
+    incrementFailure: [[1, 'boom', 3, 10]],
+    retryFailed: [[1]],
+    list: [[{ status: 'PENDING', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
+    stats: [[]],
   },
   'models/scheduledMessage.model.js': {
     findById: [[1]],
@@ -183,7 +230,9 @@ describe('SQL de los modelos (PostgreSQL)', () => {
 
   test('todas las funciones exportadas por los modelos estan cubiertas', () => {
     for (const [file, fns] of Object.entries(CASES)) {
-      const exported = Object.keys(load(file)).sort();
+      const exported = Object.keys(load(file))
+        .filter((key) => typeof load(file)[key] === 'function')
+        .sort();
       assert.deepEqual(Object.keys(fns).sort(), exported, `funciones sin caso de prueba en ${file}`);
     }
   });

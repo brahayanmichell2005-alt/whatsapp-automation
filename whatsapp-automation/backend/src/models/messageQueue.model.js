@@ -9,15 +9,38 @@ async function findById(id) {
   return rows[0] || null;
 }
 
-async function enqueue({ customerId, phone, message, scheduledAt = null, scheduledMessageId = null }) {
+async function enqueue({
+  customerId,
+  phone,
+  message,
+  scheduledAt = null,
+  scheduledMessageId = null,
+  idempotencyKey = null,
+  responseJobId = null,
+  responseGeneration = null,
+}) {
   try {
     const { rows } = await pool.query(
-      `INSERT INTO message_queue (customer_id, phone, message, status, scheduled_at, scheduled_message_id)
-       VALUES ($1, $2, $3, 'PENDING', $4, $5)
+      `INSERT INTO message_queue
+        (customer_id, phone, message, status, scheduled_at, scheduled_message_id,
+         idempotency_key, response_job_id, response_generation)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
+       ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
        RETURNING *`,
-      [customerId, phone, message, scheduledAt, scheduledMessageId]
+      [
+        customerId,
+        phone,
+        message,
+        scheduledAt,
+        scheduledMessageId,
+        idempotencyKey,
+        responseJobId,
+        responseGeneration,
+      ]
     );
-    return rows[0];
+    if (rows[0]) return rows[0];
+    // Ya existia un envio con la misma clave logica: se devuelve el original.
+    return findByIdempotencyKey(idempotencyKey);
   } catch (err) {
     // Compatibilidad durante el despliegue: si la migracion de
     // `scheduled_message_id` todavia no se aplico, se guarda el mensaje sin
@@ -33,6 +56,32 @@ async function enqueue({ customerId, phone, message, scheduledAt = null, schedul
     }
     throw err;
   }
+}
+
+async function findByIdempotencyKey(idempotencyKey) {
+  if (!idempotencyKey) return null;
+  const { rows } = await pool.query(
+    'SELECT * FROM message_queue WHERE idempotency_key = $1 LIMIT 1',
+    [idempotencyKey]
+  );
+  return rows[0] || null;
+}
+
+// Antes de enviar una respuesta automatica se verifica que el trabajo siga
+// vigente. Un mensaje nuevo o una intervencion humana lo invalida. Se acepta
+// PROCESSING porque entre insertar el envio y marcar el trabajo como QUEUED
+// hay una ventana muy corta; lo que nunca se acepta es otra generacion.
+async function isQueueItemCurrent(queueId, responseJobId, responseGeneration) {
+  if (!responseJobId) return true;
+  const { rows } = await pool.query(
+    `SELECT id FROM response_jobs
+     WHERE id = $2 AND generation = $3
+       AND status IN ('PROCESSING', 'QUEUED')
+       AND (queue_id IS NULL OR queue_id = $1)
+     LIMIT 1`,
+    [queueId, responseJobId, responseGeneration]
+  );
+  return Boolean(rows[0]);
 }
 
 // Trae el siguiente lote de mensajes listos para enviar (usado por el worker).
@@ -65,6 +114,29 @@ async function markFailed(id, errorMessage) {
   );
 }
 
+// El conector no pudo confirmar si el mensaje llego (timeout, 5xx, corte de
+// red). Queda en estado incierto y NUNCA se reintenta automaticamente.
+async function markUncertain(id, errorMessage) {
+  await pool.query(
+    `UPDATE message_queue
+     SET status = 'UNCERTAIN', attempts = attempts + 1, error_message = $1,
+         uncertain_at = NOW()
+     WHERE id = $2`,
+    [errorMessage, id]
+  );
+}
+
+// Cancela un envio concreto (respuesta invalidada) sin contarlo como fallo
+// del conector.
+async function markCancelled(id, reason = null) {
+  await pool.query(
+    `UPDATE message_queue
+     SET status = 'CANCELLED', error_message = COALESCE($1, error_message)
+     WHERE id = $2 AND status IN ('PENDING', 'PROCESSING', 'PAUSED')`,
+    [reason, id]
+  );
+}
+
 async function incrementAttempt(id, errorMessage) {
   await pool.query(
     `UPDATE message_queue
@@ -81,6 +153,21 @@ async function cancelPendingByCustomer(customerId) {
     "UPDATE message_queue SET status = 'CANCELLED' WHERE customer_id = $1 AND status IN ('PENDING', 'PAUSED')",
     [customerId]
   );
+}
+
+// Cancela solo los envios de una conversacion (intervencion humana o
+// invalidacion por un mensaje nuevo). No toca envios manuales de otros hilos.
+async function cancelPendingByConversation(conversationId) {
+  const { rowCount } = await pool.query(
+    `UPDATE message_queue q
+     SET status = 'CANCELLED'
+     WHERE q.status IN ('PENDING', 'PAUSED')
+       AND q.response_job_id IN (
+         SELECT rj.id FROM response_jobs rj WHERE rj.conversation_id = $1
+       )`,
+    [conversationId]
+  );
+  return rowCount;
 }
 
 // En serverless una ejecucion puede cortarse (timeout, redeploy) justo despues
@@ -131,13 +218,18 @@ async function list({ status = null, limit = 50, offset = 0 } = {}) {
 
 module.exports = {
   findById,
+  findByIdempotencyKey,
+  isQueueItemCurrent,
   enqueue,
   findNextBatch,
   markProcessing,
   markSent,
   markFailed,
+  markUncertain,
+  markCancelled,
   incrementAttempt,
   cancelPendingByCustomer,
+  cancelPendingByConversation,
   requeueStale,
   pauseAllPending,
   resumeAllPaused,

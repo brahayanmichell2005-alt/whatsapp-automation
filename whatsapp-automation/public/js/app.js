@@ -27,6 +27,9 @@ const state = {
   scheduled: [],
   messages: [],
   logs: [],
+  response: { settings: null, stats: null, alerts: [], limits: null },
+  responseJobs: [],
+  responseHistory: [],
   loaded: {
     customers: false,
     conversations: false,
@@ -34,6 +37,9 @@ const state = {
     scheduled: false,
     messages: false,
     logs: false,
+    response: false,
+    responseJobs: false,
+    responseHistory: false,
   },
   errors: {},
   filters: {
@@ -43,9 +49,11 @@ const state = {
     scheduled: 'ALL',
     messages: { direction: 'ALL', q: '' },
     logs: { level: 'ALL', q: '' },
+    responseJobs: 'ALL',
   },
   activeTab: 'tab-dashboard',
   modalConversationId: null,
+  modalCustomerId: null,
   lastUpdatedAt: null,
   refreshing: false,
   waPollTimer: null,
@@ -76,7 +84,7 @@ const STATUS_TONES = {
   ACTIVE: 'up', BLOCKED: 'down', ARCHIVED: '',
   OPEN: 'up', PENDING: 'warn', HUMAN: 'info', CLOSED: '',
   SCHEDULED: 'info', QUEUED: 'warn', SENT: 'up', FAILED: 'down', CANCELLED: '',
-  PROCESSING: 'info', PAUSED: 'warn',
+  PROCESSING: 'info', PAUSED: 'warn', UNCERTAIN: 'warn', STOPPED: 'down',
   INBOUND: 'info', OUTBOUND: 'up',
   INFO: '', WARN: 'warn', ERROR: 'down',
 };
@@ -217,6 +225,7 @@ async function loadMe() {
   try {
     state.user = await apiFetch('/api/auth/me');
     renderUser();
+    renderResponseControl();
   } catch (err) {
     // Un 401 ya cierra la sesión; otros errores no deben bloquear el panel.
     if (getToken()) toast(err.message, 'warn');
@@ -641,13 +650,18 @@ function renderCustomers() {
         ${c.interest_level ? `<span class="cell-sub">${esc(c.interest_level)}</span>` : ''}
       </td>
       <td>${timeHtml(c.last_message_at)}</td>
+      <td>
+        <div class="btn-row">
+          <button class="btn btn-ghost btn-sm" data-customer-response="${esc(c.id)}">Tiempo de respuesta</button>
+        </div>
+      </td>
     </tr>`);
 
-  renderRows('table-customers', 5, rows, query ? 'Ningún cliente coincide con la búsqueda.' : 'Todavía no hay clientes.');
+  renderRows('table-customers', 6, rows, query ? 'Ningún cliente coincide con la búsqueda.' : 'Todavía no hay clientes.');
 }
 
 async function loadCustomers() {
-  if (!state.loaded.customers) loadingRow('table-customers', 5);
+  if (!state.loaded.customers) loadingRow('table-customers', 6);
   try {
     const customers = await apiFetch(`/api/customers?limit=${PAGE_SIZE}`);
     state.customers = Array.isArray(customers) ? customers : [];
@@ -659,7 +673,7 @@ async function loadCustomers() {
   } catch (err) {
     state.errors.customers = err.message;
     setCount('#customers-count', 'No se pudieron cargar los clientes');
-    errorRow('table-customers', 5, `No se pudieron cargar los clientes: ${err.message}`);
+    errorRow('table-customers', 6, `No se pudieron cargar los clientes: ${err.message}`);
   }
   updateKpis();
 }
@@ -719,13 +733,19 @@ function renderConversations() {
     if (c.status !== 'CLOSED') {
       actions.push(`<button class="btn btn-danger btn-sm" data-conv-action="close" data-id="${esc(c.id)}">Cerrar</button>`);
     }
+    if (c.status === 'HUMAN' || c.bot_enabled === false) {
+      actions.push(`<button class="btn btn-ghost btn-sm" data-conv-action="release" data-id="${esc(c.id)}">Reactivar bot</button>`);
+    }
 
     return `<tr>
       <td>
         ${esc(customer ? customerLabel(customer) : `Cliente #${c.customer_id}`)}
         <span class="cell-sub">Conversación #${esc(c.id)}</span>
       </td>
-      <td>${badgeFor(c.status)}</td>
+      <td>
+        ${badgeFor(c.status)}
+        <span class="cell-sub">${c.bot_enabled === false ? 'Bot desactivado' : 'Bot activo'}</span>
+      </td>
       <td>${timeHtml(c.last_message_at || c.started_at)}</td>
       <td><div class="btn-row">${actions.join('')}</div></td>
     </tr>`;
@@ -775,8 +795,15 @@ async function handleConversationAction(action, id) {
   }
 
   if (action === 'close' && !window.confirm('¿Cerrar esta conversación?')) return;
+  if (action === 'human' && !window.confirm('¿Tomar el control humano? Se cancelarán las respuestas automáticas pendientes de esta conversación.')) return;
 
   try {
+    if (action === 'release') {
+      await apiFetch(`/api/response-control/conversations/${id}/release`, { method: 'POST' });
+      toast('Bot reactivado en la conversación', 'success');
+      await loadConversations();
+      return;
+    }
     await updateConversation(id, action === 'human' ? 'HUMAN' : 'CLOSED');
   } catch (err) {
     toast(err.message, 'error');
@@ -797,6 +824,9 @@ function updateModalHeader(conversation) {
   }
   if (conversation.status !== 'CLOSED') {
     actions.push('<button class="btn btn-danger btn-sm" data-modal-action="close">Cerrar conversación</button>');
+  }
+  if (conversation.status === 'HUMAN' || conversation.bot_enabled === false) {
+    actions.push('<button class="btn btn-primary btn-sm" data-modal-action="release">Reactivar bot</button>');
   }
   $('#modal-actions').innerHTML = actions.join('');
 }
@@ -1062,6 +1092,445 @@ async function runQueueAction(action) {
 }
 
 // ---------------------------------------------------------------------
+// Control de respuestas automaticas
+// ---------------------------------------------------------------------
+const RESPONSE_STATUS_LABELS = {
+  ACTIVE: 'Activa',
+  PAUSED: 'Pausada',
+  STOPPED: 'Detenida',
+};
+
+function isAdmin() {
+  return state.user && state.user.role === 'ADMIN';
+}
+
+function renderResponseAlerts() {
+  const container = $('#response-alerts');
+  if (!container) return;
+  const alerts = Array.isArray(state.response.alerts) ? state.response.alerts : [];
+  container.innerHTML = alerts.map((alert) => {
+    const tone = alert.level === 'error' ? 'is-error' : 'is-warn';
+    return `<div class="alert-item ${tone}">
+      <span class="status-dot ${alert.level === 'error' ? 'down' : 'warn'}"></span>
+      <div>
+        <strong>${esc(alert.code || 'Aviso')}</strong>
+        <span>${esc(alert.message || '')}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderResponseControl() {
+  const { settings, stats, limits } = state.response;
+  if (!settings || !stats) return;
+
+  setCount('#resp-kpi-pending', stats.pending ?? '–');
+  setCount('#resp-kpi-processing', stats.processing ?? '–');
+  setCount('#resp-kpi-sent', stats.sent_today ?? '–');
+  setCount('#resp-kpi-failed', stats.failed_today ?? '–');
+  setCount('#resp-kpi-uncertain', stats.uncertain_today ?? '–');
+
+  const pill = $('#response-status-pill');
+  if (pill) {
+    const tone = settings.status === 'ACTIVE' ? 'up' : settings.status === 'PAUSED' ? 'warn' : 'down';
+    pill.className = `pill is-${tone}`;
+    const stateLabel = RESPONSE_STATUS_LABELS[settings.status] || settings.status;
+    pill.textContent = settings.enabled ? stateLabel : `Desactivada · ${stateLabel}`;
+  }
+  const modePill = $('#response-mode-pill');
+  if (modePill) {
+    modePill.className = `pill ${settings.enabled && settings.status === 'ACTIVE' ? 'is-up' : 'is-warn'}`;
+    modePill.textContent = settings.enabled && settings.status === 'ACTIVE' ? 'Respondiendo' : 'En pausa';
+  }
+
+  setCount(
+    '#response-summary',
+    `${stats.pending + stats.processing + stats.paused} trabajo(s) en curso · `
+      + `${stats.sent_today} enviadas hoy · ${stats.failed_today} errores · ${stats.uncertain_today} inciertas`
+  );
+  setCount(
+    '#response-limits',
+    `Rangos permitidos: espera mínima ${limits.minDelaySeconds.min}–${limits.minDelaySeconds.max}s · `
+      + `máxima ${limits.maxDelaySeconds.min}–${limits.maxDelaySeconds.max}s · `
+      + `agrupación ${limits.groupingWindowSeconds.min}–${limits.groupingWindowSeconds.max}s · `
+      + `simultáneas ${limits.maxConcurrentResponses.min}–${limits.maxConcurrentResponses.max}.`
+  );
+
+  const form = $('#form-response');
+  if (form && !form.contains(document.activeElement)) {
+    $('#response-enabled').checked = Boolean(settings.enabled);
+    $('#response-min').value = settings.minDelaySeconds;
+    $('#response-max').value = settings.maxDelaySeconds;
+    $('#response-grouping').value = settings.groupingWindowSeconds;
+    $('#response-concurrency').value = settings.maxConcurrentResponses;
+    $('#response-threshold').value = settings.alertThreshold;
+  }
+
+  const admin = isAdmin();
+  if (form) {
+    form.querySelectorAll('input, button').forEach((node) => { node.disabled = !admin; });
+  }
+  $$('[data-response-action]').forEach((btn) => {
+    btn.disabled = !admin;
+    btn.title = admin ? '' : 'Solo un administrador puede cambiar la configuración global';
+  });
+
+  renderResponseAlerts();
+}
+
+async function loadResponseControl() {
+  try {
+    state.response = await apiFetch('/api/response-control');
+    state.loaded.response = true;
+    delete state.errors.response;
+    renderResponseControl();
+  } catch (err) {
+    state.errors.response = err.message;
+    setCount('#response-summary', `No se pudo cargar el control de respuestas: ${err.message}`);
+    const container = $('#response-alerts');
+    if (container) {
+      container.innerHTML = `<div class="alert-item is-error"><div><strong>Error</strong><span>${esc(err.message)}</span></div></div>`;
+    }
+  }
+}
+
+function readResponseForm() {
+  const enabled = $('#response-enabled').checked;
+  const values = {
+    enabled,
+    minDelaySeconds: Number($('#response-min').value),
+    maxDelaySeconds: Number($('#response-max').value),
+    groupingWindowSeconds: Number($('#response-grouping').value),
+    maxConcurrentResponses: Number($('#response-concurrency').value),
+    alertThreshold: Number($('#response-threshold').value),
+  };
+  const integerFields = ['minDelaySeconds', 'maxDelaySeconds', 'groupingWindowSeconds', 'maxConcurrentResponses', 'alertThreshold'];
+  if (integerFields.some((field) => !Number.isInteger(values[field]))) {
+    throw new Error('Todos los tiempos y límites deben ser números enteros.');
+  }
+  if (values.minDelaySeconds < 0 || values.minDelaySeconds > 600) throw new Error('La espera mínima debe estar entre 0 y 600 s.');
+  if (values.maxDelaySeconds < 0 || values.maxDelaySeconds > 900) throw new Error('La espera máxima debe estar entre 0 y 900 s.');
+  if (values.maxDelaySeconds < values.minDelaySeconds) throw new Error('La espera máxima no puede ser menor que la mínima.');
+  if (values.groupingWindowSeconds < 0 || values.groupingWindowSeconds > 120) throw new Error('La agrupación debe estar entre 0 y 120 s.');
+  if (values.maxConcurrentResponses < 1 || values.maxConcurrentResponses > 10) throw new Error('Las respuestas simultáneas deben estar entre 1 y 10.');
+  if (values.alertThreshold < 1 || values.alertThreshold > 100) throw new Error('El umbral de alertas debe estar entre 1 y 100.');
+  return values;
+}
+
+async function saveResponseSettings(event) {
+  event.preventDefault();
+  const button = $('#btn-save-response');
+  let values;
+  try {
+    values = readResponseForm();
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
+  button.disabled = true;
+  try {
+    await apiFetch('/api/response-control', { method: 'PUT', body: JSON.stringify(values) });
+    toast('Configuración de respuestas guardada', 'success');
+    await Promise.all([loadResponseControl(), loadResponseJobs(), loadResponseHistory()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function runResponseAction(action) {
+  if (!isAdmin()) return toast('Solo un administrador puede hacer esto', 'warn');
+  const messages = {
+    activate: 'Respuestas automáticas activadas',
+    pause: 'Cola de respuestas pausada',
+    stop: 'Detención de emergencia activada',
+  };
+  if (action === 'stop' && !window.confirm('¿Detener de emergencia? Se cancelarán todas las respuestas automáticas abiertas.')) return;
+  if (action === 'pause' && !window.confirm('¿Pausar la cola de respuestas? Los trabajos se conservan y pueden reanudarse.')) return;
+  try {
+    await apiFetch(`/api/response-control/${action}`, { method: 'POST', body: JSON.stringify({}) });
+    toast(messages[action] || 'Estado actualizado', 'success');
+    await Promise.all([
+      loadResponseControl(),
+      loadResponseJobs(),
+      loadResponseHistory(),
+      fetchAutomationStatus(),
+      loadQueue(),
+    ]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function jobCustomer(job) {
+  if (job.customer_name || job.customer_phone) {
+    return job.customer_name ? `${job.customer_name} · ${job.customer_phone}` : job.customer_phone;
+  }
+  const customer = customerById(job.customer_id);
+  return customer ? customerLabel(customer) : `Cliente #${job.customer_id}`;
+}
+
+function renderResponseJobs() {
+  if (!state.loaded.responseJobs) return;
+  const filter = state.filters.responseJobs;
+  const filtered = state.responseJobs.filter((job) => filter === 'ALL' || job.status === filter);
+
+  setCount(
+    '#response-jobs-count',
+    filter === 'ALL'
+      ? `${state.responseJobs.length} trabajos`
+      : `${filtered.length} de ${state.responseJobs.length} trabajos`
+  );
+
+  const rows = filtered.map((job) => {
+    const detail = job.error_message
+      ? `<span class="cell-sub error-cell">${esc(job.error_message)}</span>`
+        + (job.status === 'UNCERTAIN'
+          ? '<span class="cell-sub">Entrega incierta: no se reintenta sola. Revisa la conversación antes de reenviar.</span>'
+          : '')
+      : job.reply_text
+        ? `<span class="cell-sub">${esc(String(job.reply_text).slice(0, 120))}</span>`
+        : '<span class="cell-sub">—</span>';
+    const actions = job.status === 'FAILED'
+      ? `<button class="btn btn-ghost btn-sm" data-job-action="retry" data-id="${esc(job.id)}">Reintentar</button>`
+      : '—';
+    return `<tr>
+      <td>${esc(job.id)}</td>
+      <td>
+        ${esc(jobCustomer(job))}
+        <span class="cell-sub">Conversación #${esc(job.conversation_id)}</span>
+      </td>
+      <td>${badgeFor(job.status)}</td>
+      <td>${timeHtml(job.due_at)}</td>
+      <td>${esc(job.attempts ?? 0)} / ${esc(job.max_attempts ?? '—')}</td>
+      <td><span class="cell-truncate" title="${esc(job.reply_text || job.error_message || '')}">${detail}</span></td>
+      <td><div class="btn-row">${actions}</div></td>
+    </tr>`;
+  });
+
+  renderRows('table-response-jobs', 7, rows, 'No hay trabajos de respuesta con este estado.');
+}
+
+async function loadResponseJobs() {
+  if (!state.loaded.responseJobs) loadingRow('table-response-jobs', 7);
+  try {
+    const status = state.filters.responseJobs === 'ALL' ? '' : `&status=${encodeURIComponent(state.filters.responseJobs)}`;
+    const jobs = await apiFetch(`/api/response-control/jobs?limit=${PAGE_SIZE}${status}`);
+    state.responseJobs = Array.isArray(jobs) ? jobs : [];
+    state.loaded.responseJobs = true;
+    delete state.errors.responseJobs;
+    renderResponseJobs();
+  } catch (err) {
+    state.errors.responseJobs = err.message;
+    errorRow('table-response-jobs', 7, `No se pudieron cargar los trabajos: ${err.message}`);
+  }
+}
+
+async function retryResponseJob(id) {
+  if (!window.confirm('¿Reintentar esta respuesta? Solo se permite si el fallo fue confirmado.')) return;
+  try {
+    await apiFetch(`/api/response-control/jobs/${id}/retry`, { method: 'POST', body: JSON.stringify({}) });
+    toast('Respuesta reencolada', 'success');
+    await Promise.all([loadResponseJobs(), loadResponseControl()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function historyDetail(entry) {
+  if (entry.reason) return entry.reason;
+  const value = entry.next_value || entry.previous_value;
+  if (!value) return '—';
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return String(value);
+  }
+}
+
+function renderResponseHistory() {
+  if (!state.loaded.responseHistory) return;
+  setCount('#response-history-count', `${state.responseHistory.length} cambios recientes`);
+  const rows = state.responseHistory.map((entry) => `<tr>
+    <td>${timeHtml(entry.created_at)}</td>
+    <td>${esc(entry.scope || '—')}</td>
+    <td>${esc(entry.action || '—')}</td>
+    <td>${esc(entry.actor_name || entry.actor_email || 'Sistema')}</td>
+    <td><span class="cell-truncate" title="${esc(historyDetail(entry))}">${esc(historyDetail(entry))}</span></td>
+  </tr>`);
+  renderRows('table-response-history', 5, rows, 'Todavía no hay cambios registrados.');
+}
+
+async function loadResponseHistory() {
+  if (!state.loaded.responseHistory) loadingRow('table-response-history', 5);
+  try {
+    const items = await apiFetch('/api/response-control/history?limit=50');
+    state.responseHistory = Array.isArray(items) ? items : [];
+    state.loaded.responseHistory = true;
+    delete state.errors.responseHistory;
+    renderResponseHistory();
+  } catch (err) {
+    state.errors.responseHistory = err.message;
+    errorRow('table-response-history', 5, `No se pudo cargar el historial: ${err.message}`);
+  }
+}
+
+// -------------------------- Ajuste por cliente --------------------------
+function fillCustomerResponseForm(data) {
+  const effective = data.effective || {};
+  const global = data.global || {};
+  $('#customer-modal-title').textContent = data.customer?.name || data.customer?.phone || 'Tiempo de respuesta';
+  $('#customer-modal-subtitle').textContent = data.customer?.phone || '—';
+  setCount(
+    '#customer-response-source',
+    data.configured
+      ? 'Este cliente tiene una configuración propia. Si la borras, se usan los valores globales.'
+      : `Este cliente usa los valores globales: ${global.minDelaySeconds}–${global.maxDelaySeconds} s y agrupación de ${global.groupingWindowSeconds} s.`
+  );
+
+  $('#cres-enabled').checked = Boolean(effective.enabled);
+  $('#cres-min').value = effective.minDelaySeconds;
+  $('#cres-max').value = effective.maxDelaySeconds;
+  $('#cres-priority').value = effective.priority;
+  $('#cres-random').checked = Boolean(effective.randomVariation);
+  $('#cres-paused').checked = Boolean(effective.paused);
+
+  const conversation = data.conversation;
+  const humanPill = $('#customer-human-pill');
+  const humanStatus = $('#customer-human-status');
+  const takeoverBtn = $('[data-cust-response="takeover"]');
+  const releaseBtn = $('[data-cust-response="release"]');
+
+  if (!conversation) {
+    humanPill.className = 'pill';
+    humanPill.textContent = 'Sin conversación';
+    humanStatus.textContent = 'No hay una conversación abierta con este cliente.';
+    takeoverBtn.disabled = true;
+    releaseBtn.disabled = true;
+    takeoverBtn.hidden = true;
+    releaseBtn.hidden = true;
+    return;
+  }
+
+  const botEnabled = conversation.botEnabled !== false && conversation.status !== 'HUMAN';
+  humanPill.className = `pill ${botEnabled ? 'is-up' : 'is-warn'}`;
+  humanPill.textContent = botEnabled ? 'Bot activo' : 'Atención humana';
+  humanStatus.textContent = botEnabled
+    ? `El bot responde automáticamente. Conversación #${conversation.id} (${conversation.status}).`
+    : `Una persona tomó el control${conversation.humanTakenOverAt ? ` el ${fmtDate(conversation.humanTakenOverAt)}` : ''}. `
+      + 'Las respuestas automáticas de esta conversación están canceladas hasta que reactives el bot.';
+  takeoverBtn.disabled = !botEnabled;
+  releaseBtn.disabled = botEnabled;
+  takeoverBtn.hidden = !botEnabled;
+  releaseBtn.hidden = botEnabled;
+}
+
+async function openCustomerResponse(id) {
+  state.modalCustomerId = Number(id);
+  const modal = $('#customer-modal');
+  modal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const data = await apiFetch(`/api/response-control/customers/${id}`);
+    state.modalCustomerState = data;
+    fillCustomerResponseForm(data);
+  } catch (err) {
+    toast(err.message, 'error');
+    closeCustomerModal();
+  }
+}
+
+function closeCustomerModal() {
+  state.modalCustomerId = null;
+  state.modalCustomerState = null;
+  $('#customer-modal').classList.add('hidden');
+  document.body.style.overflow = $('#modal').classList.contains('hidden') ? '' : 'hidden';
+}
+
+function readCustomerResponseForm() {
+  const values = {
+    enabled: $('#cres-enabled').checked,
+    minDelaySeconds: Number($('#cres-min').value),
+    maxDelaySeconds: Number($('#cres-max').value),
+    randomVariation: $('#cres-random').checked,
+    priority: Number($('#cres-priority').value),
+    paused: $('#cres-paused').checked,
+  };
+  if (!Number.isInteger(values.minDelaySeconds) || !Number.isInteger(values.maxDelaySeconds) || !Number.isInteger(values.priority)) {
+    throw new Error('Los tiempos y la prioridad deben ser números enteros.');
+  }
+  if (values.minDelaySeconds < 0 || values.minDelaySeconds > 600) throw new Error('La espera mínima debe estar entre 0 y 600 s.');
+  if (values.maxDelaySeconds < 0 || values.maxDelaySeconds > 900) throw new Error('La espera máxima debe estar entre 0 y 900 s.');
+  if (values.maxDelaySeconds < values.minDelaySeconds) throw new Error('La espera máxima no puede ser menor que la mínima.');
+  if (values.priority < 0 || values.priority > 10) throw new Error('La prioridad debe estar entre 0 y 10.');
+  return values;
+}
+
+async function saveCustomerResponse(event) {
+  event.preventDefault();
+  if (!state.modalCustomerId) return;
+  const button = $('#btn-save-customer-response');
+  let values;
+  try {
+    values = readCustomerResponseForm();
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
+  button.disabled = true;
+  try {
+    const data = await apiFetch(`/api/response-control/customers/${state.modalCustomerId}`, {
+      method: 'PUT',
+      body: JSON.stringify(values),
+    });
+    state.modalCustomerState = data;
+    fillCustomerResponseForm(data);
+    toast('Tiempo de respuesta guardado', 'success');
+    await Promise.all([loadResponseControl(), loadResponseJobs(), loadResponseHistory()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function resetCustomerResponse() {
+  if (!state.modalCustomerId) return;
+  if (!window.confirm('¿Borrar la configuración propia y volver a los valores globales?')) return;
+  try {
+    const data = await apiFetch(`/api/response-control/customers/${state.modalCustomerId}`, { method: 'DELETE' });
+    state.modalCustomerState = data;
+    fillCustomerResponseForm(data);
+    toast('Se usan los valores globales para este cliente', 'success');
+    await Promise.all([loadResponseControl(), loadResponseJobs(), loadResponseHistory()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function changeCustomerHuman(action) {
+  const data = state.modalCustomerState;
+  if (!state.modalCustomerId || !data?.conversation) return;
+  const conversationId = data.conversation.id;
+  if (action === 'takeover' && !window.confirm('¿Tomar el control humano? Se cancelarán las respuestas automáticas pendientes.')) return;
+  try {
+    await apiFetch(`/api/response-control/conversations/${conversationId}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: action === 'takeover' ? 'Atención humana desde el panel' : null }),
+    });
+    toast(action === 'takeover' ? 'Atención humana activada' : 'Bot reactivado', 'success');
+    const updated = await apiFetch(`/api/response-control/customers/${state.modalCustomerId}`);
+    state.modalCustomerState = updated;
+    fillCustomerResponseForm(updated);
+    await Promise.all([loadConversations(), loadResponseControl(), loadResponseJobs()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------
 // Mensajes programados
 // ---------------------------------------------------------------------
 function renderScheduled() {
@@ -1301,6 +1770,9 @@ async function refreshAll() {
     loadScheduled(),
     loadMessages(),
     loadLogs(),
+    loadResponseControl(),
+    loadResponseJobs(),
+    loadResponseHistory(),
   ]);
   updateKpis();
   touchUpdated();
@@ -1318,6 +1790,9 @@ async function refreshActiveTab() {
       return undefined;
     case 'tab-conversations': return loadConversations();
     case 'tab-queue': return loadQueue();
+    case 'tab-responses':
+      await Promise.allSettled([loadResponseControl(), loadResponseJobs(), loadResponseHistory()]);
+      return undefined;
     case 'tab-scheduled': return loadScheduled();
     case 'tab-messages': return loadMessages();
     case 'tab-logs': return loadLogs();
@@ -1428,6 +1903,9 @@ function bindEvents() {
         else if (target === 'scheduled') await loadScheduled();
         else if (target === 'messages') await loadMessages();
         else if (target === 'logs') await loadLogs();
+        else if (target === 'responses') {
+          await Promise.allSettled([loadResponseControl(), loadResponseJobs(), loadResponseHistory()]);
+        } else if (target === 'response-jobs') await loadResponseJobs();
         touchUpdated();
         toast('Sección actualizada', 'success', 1800);
       } finally {
@@ -1482,6 +1960,33 @@ function bindEvents() {
     renderLogs();
   }, 180));
 
+  // Control de respuestas automaticas
+  $('#form-response').addEventListener('submit', saveResponseSettings);
+  $$('[data-response-action]').forEach((btn) => {
+    btn.addEventListener('click', () => runResponseAction(btn.dataset.responseAction));
+  });
+  $('#filter-response-jobs').addEventListener('change', (event) => {
+    state.filters.responseJobs = event.target.value;
+    loadResponseJobs();
+  });
+  $('#table-response-jobs tbody').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-job-action]');
+    if (btn && btn.dataset.jobAction === 'retry') retryResponseJob(btn.dataset.id);
+  });
+  $('#table-customers tbody').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-customer-response]');
+    if (btn) openCustomerResponse(btn.dataset.customerResponse);
+  });
+  $('#form-customer-response').addEventListener('submit', saveCustomerResponse);
+  $$('#customer-modal [data-cust-response]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.custResponse;
+      if (action === 'reset') resetCustomerResponse();
+      else changeCustomerHuman(action);
+    });
+  });
+  $$('[data-close-customer-modal]').forEach((node) => node.addEventListener('click', closeCustomerModal));
+
   // Cola
   $$('[data-queue]').forEach((btn) => {
     btn.addEventListener('click', () => runQueueAction(btn.dataset.queue));
@@ -1513,6 +2018,14 @@ function bindEvents() {
     const action = btn.dataset.modalAction;
     if (action === 'close' && !window.confirm('¿Cerrar esta conversación?')) return;
     try {
+      if (action === 'release') {
+        await apiFetch(`/api/response-control/conversations/${state.modalConversationId}/release`, { method: 'POST', body: JSON.stringify({}) });
+        toast('Bot reactivado en la conversación', 'success');
+        await loadConversations();
+        const conversation = state.conversations.find((c) => String(c.id) === String(state.modalConversationId));
+        if (conversation) updateModalHeader(conversation);
+        return;
+      }
       await updateConversation(state.modalConversationId, action === 'human' ? 'HUMAN' : 'CLOSED');
     } catch (err) {
       toast(err.message, 'error');
@@ -1520,7 +2033,9 @@ function bindEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal();
+    if (event.key !== 'Escape') return;
+    if (!$('#customer-modal').classList.contains('hidden')) closeCustomerModal();
+    else if (!$('#modal').classList.contains('hidden')) closeModal();
   });
 
   document.addEventListener('visibilitychange', () => {
