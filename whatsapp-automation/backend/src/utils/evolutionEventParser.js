@@ -11,6 +11,8 @@ const KNOWN_EVENTS = new Set([
   'qrcode.updated',
 ]);
 
+const { extractMedia } = require('../services/media.service');
+
 function isKnownEvent(eventName) {
   return KNOWN_EVENTS.has(eventName);
 }
@@ -18,7 +20,8 @@ function isKnownEvent(eventName) {
 // remoteJid llega como "51999000111@s.whatsapp.net" o "...@g.us" para grupos.
 function extractPhoneFromJid(jid) {
   if (!jid) return null;
-  return jid.split('@')[0];
+  // Algunos payloads agregan el sufijo de dispositivo: "51999...:12@s.whatsapp.net"
+  return jid.split('@')[0].split(':')[0];
 }
 
 function isGroupJid(jid) {
@@ -54,26 +57,40 @@ function parseMessageUpsert(payload) {
   const entry = payload?.data;
   if (!entry) return null;
 
-  const remoteJid = entry.key?.remoteJid;
-  // Contactos con ID interno (@lid): el numero real viene en remoteJidAlt / senderPn.
-  const realJid =
-    (typeof remoteJid === 'string' && remoteJid.endsWith('@lid')
-      ? [entry.key?.remoteJidAlt, entry.key?.senderPn, entry.senderPn, entry.key?.participantPn].find(
-          (j) => typeof j === 'string' && j.includes('@s.whatsapp.net')
-        )
-      : null) || remoteJid;
+  const primaryJid = entry.key?.remoteJid;
+  const isPhoneJid = (jid) =>
+    typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us'));
+  const isLidJid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');
+  // WhatsApp puede enviar un JID @lid (identificador interno) y el telefono
+  // real en remoteJidAlt. Cuando existe un telefono alternativo se responde
+  // por telefono; cuando no existe, hay que conservar el JID @lid completo
+  // para que Evolution API pueda entregar la respuesta.
+  const phoneJid = [
+    entry.key?.remoteJidAlt,
+    entry.remoteJidAlt,
+    entry.key?.senderPn,
+    entry.senderPn,
+  ].find(isPhoneJid);
+  const isLid = isLidJid(primaryJid);
+  const resolvedJid = isLid && phoneJid ? phoneJid : primaryJid;
   const fromMe = Boolean(entry.key?.fromMe);
   const externalMessageId = entry.key?.id || null;
   const message = entry.message || null;
 
   return {
     fromMe,
-    isGroup: isGroupJid(remoteJid),
-    phone: extractPhoneFromJid(realJid),
+    isGroup: isGroupJid(resolvedJid),
+    phone: extractPhoneFromJid(resolvedJid),
+    // Solo se guarda el JID completo cuando no hay telefono alternativo: en
+    // ese caso el numero visible es un LID y no sirve para enviar.
+    remoteJid: isLid && !phoneJid ? primaryJid : null,
     pushName: entry.pushName || null,
     externalMessageId,
     messageType: detectMessageType(message),
     content: extractTextContent(message),
+    // Informacion del archivo adjunto (nota de voz, imagen, sticker...):
+    // url cifrada del CDN + mediaKey para descifrarlo en el sistema.
+    media: extractMedia(message),
     timestamp: entry.messageTimestamp || null,
   };
 }

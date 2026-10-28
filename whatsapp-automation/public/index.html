@@ -7,7 +7,7 @@
   <meta name="description" content="Panel de administración de WhatsApp Automation: estado, clientes, conversaciones, cola y mensajes programados." />
   <title>WhatsApp Automation · Panel</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2325d366'/%3E%3Cpath d='M9 8h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z' fill='%23052e16'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=2" />
+  <link rel="stylesheet" href="css/style.css?v=3" />
   <script>
     // Aplica el tema guardado antes del primer pintado (evita el destello).
     try {
@@ -86,6 +86,10 @@
       <button class="tab-btn active" role="tab" aria-selected="true" data-tab="tab-dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h4l2 5 4-12 2 5h6"/></svg>
         Estado
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h.01M12 12h.01M16 12h.01"/><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L4 20l1-4a8.4 8.4 0 1 1 16-4.5Z"/></svg>
+        Chat en vivo
       </button>
       <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-customers">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg>
@@ -205,6 +209,31 @@
           </div>
           <div id="qr-container" class="qr-container" aria-live="polite"></div>
         </section>
+      </section>
+
+      <!-- ============ CHAT EN VIVO ============ -->
+      <section id="tab-chat" class="tab-panel hidden" role="tabpanel">
+        <div class="section-head">
+          <div>
+            <h2>Chat en vivo</h2>
+            <p class="muted" id="live-chat-count">Cargando…</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" data-refresh="chat">Actualizar</button>
+        </div>
+
+        <p class="muted note">Los mensajes se actualizan solos cada 5 segundos. Con el botón de borrar quitas el mensaje del panel; si lo envió el bot, también se intenta borrar en WhatsApp para todos.</p>
+
+        <div class="live-chat-layout">
+          <aside class="live-chat-list" id="live-chat-list" aria-label="Conversaciones">
+            <p class="chat-empty">Cargando conversaciones…</p>
+          </aside>
+          <div class="live-chat-main">
+            <div class="live-chat-header" id="live-chat-header">Selecciona una conversación</div>
+            <div class="live-chat-messages" id="live-chat-messages" aria-live="polite">
+              <p class="chat-empty">Elige una conversación de la lista.</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ============ CLIENTES ============ -->
@@ -470,6 +499,6 @@
 
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
-  <script src="js/app.js?v=2"></script>
+  <script src="js/app.js?v=3"></script>
 </body>
 </html>

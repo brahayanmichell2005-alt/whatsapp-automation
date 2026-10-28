@@ -853,6 +853,159 @@ function closeModal() {
 }
 
 // ---------------------------------------------------------------------
+// Chat en vivo
+// ---------------------------------------------------------------------
+const liveChatState = { conversationId: null, conversations: [], tick: 0 };
+
+function liveChatBubbleText(message) {
+  let text = String(message.content || '');
+  let label = null;
+  // Las transcripciones/descripciones llegan como "[La persona envió ...]: texto"
+  const match = text.match(/^\[([^\]]+)\]:?\s*/);
+  if (match) {
+    label = match[1];
+    text = text.slice(match[0].length);
+  }
+  const typeLabels = {
+    AUDIO: 'Nota de voz',
+    IMAGE: 'Imagen',
+    VIDEO: 'Vídeo',
+    DOCUMENT: 'Documento',
+    LOCATION: 'Ubicación',
+    STICKER: 'Sticker',
+  };
+  return { label, text, type: typeLabels[message.message_type] || null };
+}
+
+function liveChatName(conversation) {
+  return conversation.customer_name || conversation.customer_phone || `Cliente #${conversation.customer_id}`;
+}
+
+function renderLiveChatList() {
+  const listEl = $('#live-chat-list');
+  if (!listEl) return;
+  const items = liveChatState.conversations;
+
+  setCount(
+    '#live-chat-count',
+    items.length
+      ? `${items.length} ${items.length === 1 ? 'conversación' : 'conversaciones'}`
+      : 'Sin conversaciones todavía'
+  );
+
+  if (!items.length) {
+    listEl.innerHTML = '<p class="chat-empty">Sin conversaciones todavía.</p>';
+    return;
+  }
+
+  const scrollTop = listEl.scrollTop;
+  listEl.innerHTML = items.map((conversation) => {
+    const preview = String(conversation.last_message_preview || '')
+      .replace(/^\[[^\]]+\]:?\s*/, '')
+      .slice(0, 60);
+    const active = conversation.id === liveChatState.conversationId ? ' is-active' : '';
+    return `<button type="button" class="live-chat-item${active}" data-live-chat="${esc(conversation.id)}">
+      <span class="live-chat-item-name">${esc(liveChatName(conversation))}</span>
+      <span class="live-chat-item-preview">${esc(preview || 'Sin mensajes')}</span>
+    </button>`;
+  }).join('');
+  listEl.scrollTop = scrollTop;
+
+  $$('[data-live-chat]', listEl).forEach((node) => {
+    node.addEventListener('click', () => openLiveChat(Number(node.dataset.liveChat)));
+  });
+}
+
+async function loadLiveChats() {
+  const listEl = $('#live-chat-list');
+  if (!listEl) return;
+  try {
+    const conversations = await apiFetch('/api/conversations?view=chat&limit=50');
+    liveChatState.conversations = Array.isArray(conversations) ? conversations : [];
+    renderLiveChatList();
+  } catch (err) {
+    setCount('#live-chat-count', 'No se pudo cargar el chat');
+    listEl.innerHTML = `<p class="chat-empty">No se pudo cargar: ${esc(err.message)}</p>`;
+  }
+}
+
+async function openLiveChat(conversationId) {
+  liveChatState.conversationId = conversationId;
+  renderLiveChatList();
+  const conversation = liveChatState.conversations.find((c) => c.id === conversationId);
+  const header = $('#live-chat-header');
+  if (header) {
+    header.textContent = conversation ? liveChatName(conversation) : `Conversación ${conversationId}`;
+  }
+  const container = $('#live-chat-messages');
+  if (container) container.innerHTML = '<p class="chat-empty">Cargando mensajes…</p>';
+  await refreshLiveChatMessages();
+}
+
+async function refreshLiveChatMessages() {
+  if (!liveChatState.conversationId) return;
+  const container = $('#live-chat-messages');
+  if (!container) return;
+  const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+  try {
+    const messages = await apiFetch(
+      `/api/messages?conversation_id=${encodeURIComponent(liveChatState.conversationId)}&limit=${PAGE_SIZE}`
+    );
+    const list = Array.isArray(messages) ? messages : [];
+
+    if (!list.length) {
+      container.innerHTML = '<p class="chat-empty">Sin mensajes en esta conversación.</p>';
+      return;
+    }
+
+    container.innerHTML = list.map((message) => {
+      const { label, text, type } = liveChatBubbleText(message);
+      const side = message.direction === 'INBOUND' ? 'in' : 'out';
+      const parts = [];
+      if (type) parts.push(`<div class="live-bubble-type">${esc(type)}</div>`);
+      if (label) parts.push(`<div class="live-bubble-type">${esc(label)}</div>`);
+      if (text) parts.push(`<div class="live-bubble-text">${esc(text).replace(/\n/g, '<br>')}</div>`);
+      return `<div class="live-row ${side}">
+        <div class="live-bubble">
+          ${parts.join('')}
+          <div class="live-bubble-meta">
+            <span>${esc(fmtDate(message.created_at))}</span>
+            <button type="button" class="live-bubble-del" data-del-live-msg="${esc(message.id)}" title="Borrar mensaje" aria-label="Borrar mensaje">🗑</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    if (atBottom) container.scrollTop = container.scrollHeight;
+    $$('[data-del-live-msg]', container).forEach((node) => {
+      node.addEventListener('click', () => deleteLiveChatMessage(Number(node.dataset.delLiveMsg)));
+    });
+  } catch (err) {
+    container.innerHTML = `<p class="chat-empty">Error: ${esc(err.message)}</p>`;
+  }
+}
+
+async function deleteLiveChatMessage(id) {
+  if (!window.confirm('¿Borrar este mensaje del panel? Si lo envió el bot, también se intentará borrar en WhatsApp para todos.')) {
+    return;
+  }
+  try {
+    const result = await apiFetch(`/api/messages/${id}`, { method: 'DELETE' });
+    if (result?.deletedFromPanel && result?.whatsappRevoked) {
+      toast('Mensaje borrado del panel y de WhatsApp', 'success');
+    } else if (result?.deletedFromPanel) {
+      toast('Borrado del panel. WhatsApp no confirmó el borrado para todos.', 'warn', 6500);
+    } else {
+      toast('El servidor no confirmó el borrado', 'warn');
+    }
+    await Promise.allSettled([refreshLiveChatMessages(), loadLiveChats()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------
 // Cola
 // ---------------------------------------------------------------------
 function renderQueue() {
@@ -1159,6 +1312,10 @@ async function refreshActiveTab() {
       await Promise.allSettled([fetchHealth(), fetchAutomationStatus()]);
       break;
     case 'tab-customers': return loadCustomers();
+    case 'tab-chat':
+      await loadLiveChats();
+      if (liveChatState.conversationId) await refreshLiveChatMessages();
+      return undefined;
     case 'tab-conversations': return loadConversations();
     case 'tab-queue': return loadQueue();
     case 'tab-scheduled': return loadScheduled();
@@ -1265,6 +1422,7 @@ function bindEvents() {
       btn.disabled = true;
       try {
         if (target === 'customers') await loadCustomers();
+        else if (target === 'chat') await loadLiveChats();
         else if (target === 'conversations') await loadConversations();
         else if (target === 'queue') await loadQueue();
         else if (target === 'scheduled') await loadScheduled();
@@ -1380,6 +1538,14 @@ function init() {
   renderUser();
   setInterval(updateLastUpdated, 1000);
   setInterval(silentRefresh, 20000);
+
+  // El chat en vivo se refresca cada 5 s mientras su pestaña está visible.
+  setInterval(() => {
+    if (state.activeTab !== 'tab-chat' || document.hidden) return;
+    liveChatState.tick += 1;
+    if (liveChatState.tick % 3 === 1) loadLiveChats();
+    refreshLiveChatMessages();
+  }, 5000);
 
   if (getToken()) {
     showApp();

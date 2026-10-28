@@ -69,6 +69,40 @@ async function touchLastMessage(id) {
   await pool.query('UPDATE customers SET last_message_at = NOW() WHERE id = $1', [id]);
 }
 
+// ---------------------------------------------------------------------
+// Memoria de largo plazo por cliente (columna ai_profile). La IA resume
+// la conversacion cada N mensajes y guarda aqui lo importante (que busca,
+// presupuesto, preferencias); el resumen se inyecta en el prompt de la
+// IA en los mensajes siguientes, asi el bot "recuerda" aunque cambien los
+// dias o se limpie el historial reciente.
+// ---------------------------------------------------------------------
+let aiProfileReady = false;
+async function ensureAiProfile() {
+  if (aiProfileReady) return;
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS ai_profile TEXT');
+  aiProfileReady = true;
+}
+
+async function updateAiProfile(id, profileText) {
+  await ensureAiProfile();
+  const { rows } = await pool.query(
+    'UPDATE customers SET ai_profile = $1 WHERE id = $2 RETURNING ai_profile',
+    [profileText, id]
+  );
+  return rows[0] || null;
+}
+
+// El SELECT * de findByPhone/findOrCreate ya trae ai_profile si existe;
+// si la columna se acaba de crear en este proceso, se recarga el cliente.
+async function getAiProfile(id) {
+  await ensureAiProfile();
+  const { rows } = await pool.query(
+    'SELECT ai_profile FROM customers WHERE id = $1 LIMIT 1',
+    [id]
+  );
+  return (rows[0] && rows[0].ai_profile) || null;
+}
+
 async function list({ limit = 50, offset = 0 } = {}) {
   const { rows } = await pool.query(
     'SELECT * FROM customers ORDER BY updated_at DESC, id DESC LIMIT $1 OFFSET $2',
@@ -106,4 +140,7 @@ module.exports = {
   list,
   update,
   remove,
+  ensureAiProfile,
+  updateAiProfile,
+  getAiProfile,
 };

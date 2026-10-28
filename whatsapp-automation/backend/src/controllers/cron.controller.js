@@ -5,6 +5,7 @@
 const env = require('../config/env');
 const schedulerService = require('../services/scheduler.service');
 const messageWorker = require('../workers/message.worker');
+const assistantService = require('../services/assistant.service');
 
 async function tick(req, res, next) {
   try {
@@ -16,7 +17,16 @@ async function tick(req, res, next) {
     // 2) Cola -> WhatsApp (respeta horario, limites e intervalos)
     const worker = await messageWorker.tick({ budgetMs: env.CRON_BUDGET_MS });
 
-    res.json({ ok: true, scheduledMoved, worker, tookMs: Date.now() - startedAt });
+    // 3) Resumen diario del asistente (una vez al dia, a la hora configurada).
+    //    Si falla no afecta al envio de la cola: se registra y sigue.
+    let daily = null;
+    try {
+      daily = await assistantService.dailyTick();
+    } catch (err) {
+      daily = { error: err.message };
+    }
+
+    res.json({ ok: true, scheduledMoved, worker, daily, tookMs: Date.now() - startedAt });
   } catch (err) {
     next(err);
   }

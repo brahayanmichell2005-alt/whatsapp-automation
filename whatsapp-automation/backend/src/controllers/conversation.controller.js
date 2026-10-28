@@ -9,7 +9,11 @@ async function list(req, res, next) {
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     const offset = parseInt(req.query.offset, 10) || 0;
     const status = req.query.status || null;
-    const conversations = await conversationModel.list({ status, limit, offset });
+    // Vista "chat": para el chat en vivo del panel, con nombre del cliente
+    // y vista previa del ultimo mensaje.
+    const conversations = req.query.view === 'chat'
+      ? await conversationModel.listForChat({ limit, offset })
+      : await conversationModel.list({ status, limit, offset });
     res.json(conversations);
   } catch (err) {
     next(err);

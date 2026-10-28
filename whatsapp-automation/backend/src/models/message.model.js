@@ -44,6 +44,13 @@ async function updateStatus(id, status) {
   return rows[0] || null;
 }
 
+// Borrado fisico desde el panel (vista de chat en vivo). Devuelve true si
+// existia y se borro, false si ya no estaba.
+async function remove(id) {
+  const { rowCount } = await pool.query('DELETE FROM messages WHERE id = $1', [id]);
+  return rowCount > 0;
+}
+
 async function listByConversation(conversationId, { limit = 100, offset = 0 } = {}) {
   const { rows } = await pool.query(
     'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC, id ASC LIMIT $2 OFFSET $3',
@@ -69,12 +76,23 @@ async function list({ limit = 50, offset = 0 } = {}) {
   return rows;
 }
 
+// Total de mensajes de una conversacion (para decidir cuando resumir memoria).
+async function countByConversation(conversationId) {
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS total FROM messages WHERE conversation_id = $1',
+    [conversationId]
+  );
+  return (rows[0] && rows[0].total) || 0;
+}
+
 module.exports = {
   listRecentByConversation,
   findById,
   findByExternalId,
   create,
   updateStatus,
+  remove,
   listByConversation,
+  countByConversation,
   list,
 };

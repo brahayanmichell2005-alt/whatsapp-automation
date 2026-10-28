@@ -21,6 +21,7 @@ async function receiveWhatsappEvent(req, res) {
 
   if (!eventParser.isKnownEvent(event)) {
     // Ignorar de forma segura eventos no utilizados (Seccion 6, ultima linea).
+    logger.warn({ event }, 'Evento webhook no conocido, ignorado');
     return res.status(200).json({ received: true, processed: false, event });
   }
 
@@ -28,9 +29,24 @@ async function receiveWhatsappEvent(req, res) {
     if (event === 'messages.upsert') {
       const parsed = eventParser.parseMessageUpsert(req.body);
       if (!parsed) {
+        logger.warn({ event }, 'messages.upsert sin data, ignorado');
         return res.status(200).json({ received: true, processed: false, event });
       }
       const result = await messageIntakeService.handleInboundMessage(parsed);
+      if (result.skipped) {
+        // Diagnostico: registrar porque se omitio (antes quedaba en silencio).
+        logger.warn(
+          {
+            reason: result.reason,
+            fromMe: parsed.fromMe,
+            externalMessageId: parsed.externalMessageId,
+            phone: parsed.phone,
+            remoteJid: parsed.remoteJid,
+            messageType: parsed.messageType,
+          },
+          'Mensaje omitido por el sistema'
+        );
+      }
       return res.status(200).json({ received: true, processed: !result.skipped, ...resultSummary(result) });
     }
 

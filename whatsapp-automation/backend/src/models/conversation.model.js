@@ -60,6 +60,22 @@ async function updateStatus(id, status, { assignedTo = undefined } = {}) {
 
 // NULLS LAST: en MySQL las conversaciones sin mensajes quedaban al final del
 // orden descendente; en PostgreSQL quedarian primero si no se indica.
+// Lista para la vista de chat en vivo: incluye el nombre/telefono del
+// cliente y una vista previa del ultimo mensaje de cada conversacion.
+async function listForChat({ limit = 50, offset = 0 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT conv.*, c.name AS customer_name, c.phone AS customer_phone,
+            (SELECT content FROM messages WHERE conversation_id = conv.id
+              ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message_preview
+     FROM conversations conv
+     LEFT JOIN customers c ON c.id = conv.customer_id
+     ORDER BY conv.last_message_at DESC NULLS LAST, conv.id DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  return rows;
+}
+
 async function list({ status = null, limit = 50, offset = 0 } = {}) {
   if (status) {
     const { rows } = await pool.query(
@@ -87,4 +103,5 @@ module.exports = {
   touchLastMessage,
   updateStatus,
   list,
+  listForChat,
 };

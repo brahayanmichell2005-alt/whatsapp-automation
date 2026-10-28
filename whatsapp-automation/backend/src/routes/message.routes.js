@@ -8,5 +8,6 @@ const { requireAuth } = require('../middleware/requireAuth');
 
 router.get('/', requireAuth, messageController.list);
 router.get('/:id', requireAuth, messageController.getById);
+router.delete('/:id', requireAuth, messageController.remove);
 
 module.exports = router;
