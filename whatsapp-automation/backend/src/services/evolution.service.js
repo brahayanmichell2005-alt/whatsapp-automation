@@ -381,6 +381,32 @@ async function sendTextMessage(phone, text) {
   }
 }
 
+// Nombre del contacto tal como lo tiene guardado el telefono vinculado
+// (agenda de WhatsApp). Evolution API lo expone en chat/findContacts. Es
+// "mejor esfuerzo": ante cualquier fallo devuelve null y no frena el bot.
+async function findContactName(phoneOrJid) {
+  try {
+    const baseURL = await requireConfig();
+    const raw = String(phoneOrJid || '').trim();
+    if (!raw) return null;
+    const jid = raw.includes('@') ? raw : `${digitsOnly(raw)}@s.whatsapp.net`;
+    const { data } = await client(baseURL).post(
+      `/chat/findContacts/${encodeURIComponent(instanceName())}`,
+      { where: { remoteJid: jid } },
+      { timeout: 4000 }
+    );
+    const list = Array.isArray(data) ? data : data && Array.isArray(data.contacts) ? data.contacts : [];
+    const digits = digitsOnly(raw);
+    for (const c of list) {
+      const name = String((c && (c.pushName || c.name || c.verifiedName)) || '').trim();
+      if (name.length >= 2 && /\p{L}/u.test(name) && name.replace(/\D/g, '') !== digits) return name.slice(0, 150);
+    }
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
 // Borra un mensaje enviado por el bot para todos en WhatsApp (delete for
 // everyone). Evolution API expone esto segun la version/edicion:
 // se prueban todas las variantes conocidas y se informa si ninguna
@@ -418,6 +444,7 @@ module.exports = {
   logoutInstance,
   setWebhook,
   sendTextMessage,
+  findContactName,
   revokeMessage,
   mapConnectionStatus,
   getBaseUrl,

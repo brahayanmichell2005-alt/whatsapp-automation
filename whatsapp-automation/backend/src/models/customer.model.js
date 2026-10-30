@@ -4,6 +4,22 @@
 
 const { pool } = require('../config/database');
 
+// Un nombre es util si tiene al menos 2 caracteres y alguna letra: descarta
+// null, ".", "-", "..", solo digitos, etc. (pushName vacio o de relleno).
+function isUsableName(name) {
+  if (typeof name !== 'string') return false;
+  const n = name.trim();
+  return n.length >= 2 && /\p{L}/u.test(n);
+}
+
+async function setName(id, name) {
+  const { rows } = await pool.query('UPDATE customers SET name = $1 WHERE id = $2 RETURNING *', [
+    String(name).trim().slice(0, 150),
+    id,
+  ]);
+  return rows[0] || null;
+}
+
 async function findByPhone(phone) {
   const { rows } = await pool.query('SELECT * FROM customers WHERE phone = $1 LIMIT 1', [phone]);
   return rows[0] || null;
@@ -30,21 +46,27 @@ async function create({ phone, name = null, email = null, remoteJid = null }) {
 async function findOrCreateByPhone(phone, name = null, remoteJid = null) {
   const existing = await findByPhone(phone);
   if (existing) {
-    if (remoteJid && existing.remote_jid !== remoteJid) {
+    let current = existing;
+    if (remoteJid && current.remote_jid !== remoteJid) {
       const { rows } = await pool.query(
         'UPDATE customers SET remote_jid = $1 WHERE id = $2 RETURNING *',
-        [remoteJid, existing.id]
+        [remoteJid, current.id]
       );
-      return rows[0] || existing;
+      current = rows[0] || current;
     }
-    return existing;
+    // Antes el nombre solo se guardaba al crear el cliente: si el primer
+    // mensaje llegaba sin pushName (o con "."), quedaba asi para siempre.
+    if (!isUsableName(current.name) && isUsableName(name)) {
+      current = (await setName(current.id, name)) || current;
+    }
+    return current;
   }
 
   const { rows } = await pool.query(
     `INSERT INTO customers (phone, name, remote_jid) VALUES ($1, $2, $3)
      ON CONFLICT (phone) DO NOTHING
      RETURNING *`,
-    [phone, name, remoteJid]
+    [phone, isUsableName(name) ? String(name).trim() : null, remoteJid]
   );
   const created = rows[0] || (await findByPhone(phone));
   if (created && remoteJid && created.remote_jid !== remoteJid) {
@@ -111,6 +133,17 @@ async function list({ limit = 50, offset = 0 } = {}) {
   return rows;
 }
 
+// Varios clientes por id (para audiencias de campana por lista manual).
+async function listByIds(ids) {
+  const clean = (ids || []).map(Number).filter(Number.isFinite);
+  if (!clean.length) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM customers WHERE id = ANY($1::int[])`,
+    [clean]
+  );
+  return rows;
+}
+
 async function update(id, fields) {
   const allowed = ['name', 'email', 'status', 'interest_type', 'interest_level'];
   const keys = Object.keys(fields).filter((k) => allowed.includes(k));
@@ -135,9 +168,12 @@ module.exports = {
   findById,
   create,
   findOrCreateByPhone,
+  isUsableName,
+  setName,
   updateClassification,
   touchLastMessage,
   list,
+  listByIds,
   update,
   remove,
   ensureAiProfile,
