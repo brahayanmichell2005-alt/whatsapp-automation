@@ -65,15 +65,23 @@ function lintAllCalls(label) {
 // ----------------------------------------------------------- casos por modelo
 const NOW = new Date('2026-09-19T15:00:00Z');
 
+// Funciones puras: no acceden a la base de datos, asi que no tienen consultas
+// que revisar. Se cubren con pruebas de comportamiento mas abajo.
+const PURE_FNS = {
+  'models/customer.model.js': ['isUsableName'],
+};
+
 const CASES = {
   'models/customer.model.js': {
     findByPhone: [['51999000111']],
     findById: [[1]],
     create: [[{ phone: '51999000111', name: 'Ana', email: 'a@a.com' }]],
     findOrCreateByPhone: [['51999000111', 'Ana']],
+    setName: [[1, 'Ana']],
     updateClassification: [[1, { interestType: 'PRODUCTO', interestLevel: 'ALTO' }]],
     touchLastMessage: [[1]],
     list: [[{ limit: 10, offset: 0 }], [undefined]],
+    listByIds: [[[1, 2, 3]]],
     update: [[1, { name: 'Ana', status: 'BLOCKED', interest_type: 'SERVICIO', evil: 'x' }], [1, {}]],
     remove: [[1]],
     ensureAiProfile: [[]],
@@ -230,8 +238,9 @@ describe('SQL de los modelos (PostgreSQL)', () => {
 
   test('todas las funciones exportadas por los modelos estan cubiertas', () => {
     for (const [file, fns] of Object.entries(CASES)) {
+      const pure = PURE_FNS[file] || [];
       const exported = Object.keys(load(file))
-        .filter((key) => typeof load(file)[key] === 'function')
+        .filter((key) => typeof load(file)[key] === 'function' && !pure.includes(key))
         .sort();
       assert.deepEqual(Object.keys(fns).sort(), exported, `funciones sin caso de prueba en ${file}`);
     }
@@ -257,11 +266,23 @@ describe('Comportamiento de los modelos', () => {
     assert.equal(await load('models/conversation.model.js').findById(99), null);
   });
 
-  test('findOrCreateByPhone: existente -> no inserta', async () => {
-    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519' }], rowCount: 1 });
+  test('findOrCreateByPhone: existente con nombre util -> no inserta ni actualiza', async () => {
+    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519', name: 'Ana' }], rowCount: 1 });
     const row = await load('models/customer.model.js').findOrCreateByPhone('519', 'Ana');
     assert.equal(row.id, 7);
     assert.equal(fakePg.calls.length, 1);
+  });
+
+  test('findOrCreateByPhone: existente sin nombre -> guarda el pushName util', async () => {
+    const answers = [
+      { rows: [{ id: 7, phone: '519', name: '.' }], rowCount: 1 }, // SELECT inicial
+      { rows: [{ id: 7, phone: '519', name: 'Ana' }], rowCount: 1 }, // UPDATE del nombre
+    ];
+    fakePg.handler = async () => answers.shift();
+    const row = await load('models/customer.model.js').findOrCreateByPhone('519', 'Ana');
+    assert.equal(row.name, 'Ana');
+    assert.equal(fakePg.calls.length, 2);
+    assert.match(fakePg.calls[1].text, /UPDATE customers SET name = \$1/);
   });
 
   test('findOrCreateByPhone: carrera (otro webhook lo creo primero) -> relee sin fallar', async () => {
@@ -274,6 +295,19 @@ describe('Comportamiento de los modelos', () => {
     const row = await load('models/customer.model.js').findOrCreateByPhone('519');
     assert.equal(row.id, 5);
     assert.match(fakePg.calls[1].text, /ON CONFLICT \(phone\) DO NOTHING/);
+  });
+
+  test('isUsableName descarta nombres vacios o de relleno', async () => {
+    const { isUsableName } = load('models/customer.model.js');
+    for (const value of ['Ana', 'José', 'A1', 'Ma ']) assert.equal(isUsableName(value), true, String(value));
+    for (const value of ['', ' ', '.', '..', '-', '12', '123456', null, undefined, 42])
+      assert.equal(isUsableName(value), false, String(value));
+  });
+
+  test('listByIds sin ids no consulta y devuelve lista vacia', async () => {
+    const rows = await load('models/customer.model.js').listByIds([]);
+    assert.deepEqual(rows, []);
+    assert.equal(fakePg.calls.length, 0);
   });
 
   test('las listas con fechas anulables usan NULLS LAST (como MySQL)', async () => {
