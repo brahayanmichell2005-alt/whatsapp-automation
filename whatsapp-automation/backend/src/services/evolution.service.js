@@ -83,14 +83,41 @@ function client(baseURL) {
   });
 }
 
+// Evolution a veces devuelve 500 con el texto de una excepcion de Prisma
+// (su propia base de datos). El cuerpo incluye codigo minificado y no aporta
+// nada al usuario; se resume a una accion concreta y el detalle queda en logs.
+const PRISMA_HINT =
+  'Evolution API no pudo consultar su base de datos. Es un fallo temporal del conector: ' +
+  'reintenta en unos segundos y, si persiste, reinicia o actualiza Evolution API.';
+
+function isPrismaFailure(text) {
+  return /Invalid `?[\w.]*prisma[\w.]*`? invocation/i.test(text)
+    || /this\.prismaRepository\./i.test(text)
+    || /PrismaClient/i.test(text);
+}
+
+function extractUpstream(data) {
+  if (!data) return '';
+  if (typeof data === 'string') return data.trim();
+  if (Array.isArray(data.response && data.response.message)) return data.response.message.join(', ').trim();
+  if (Array.isArray(data.message)) return data.message.join(', ').trim();
+  if (typeof data.message === 'string') return data.message.trim();
+  if (data.response && typeof data.response.message === 'string') return data.response.message.trim();
+  if (typeof data.error === 'string') return data.error.trim();
+  if (data.error && typeof data.error.message === 'string') return data.error.message.trim();
+  try {
+    return JSON.stringify(data);
+  } catch (err) {
+    return '';
+  }
+}
+
 function upstreamMessage(err) {
-  const data = err && err.response && err.response.data;
-  if (typeof data === 'string' && data.trim()) return data.trim().slice(0, 300);
-  if (data && Array.isArray(data.response && data.response.message)) return data.response.message.join(', ').slice(0, 300);
-  if (data && typeof data.message === 'string') return data.message.slice(0, 300);
-  if (data && data.response && typeof data.response.message === 'string') return data.response.message.slice(0, 300);
-  if (data && typeof data.error === 'string') return data.error.slice(0, 300);
-  return (err && err.message) || 'error desconocido';
+  const raw = extractUpstream(err && err.response && err.response.data)
+    || (err && err.message)
+    || 'error desconocido';
+  if (isPrismaFailure(raw)) return PRISMA_HINT;
+  return raw.slice(0, 300);
 }
 
 function isInstanceMissing(err) {
@@ -136,6 +163,15 @@ function serviceError(step, err, baseURL) {
   }
   const upstream = err && err.response ? err.response.status : null;
   const timeout = err && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT');
+  const rawUpstream = extractUpstream(err && err.response && err.response.data);
+  // El detalle completo (p. ej. la causa real de Prisma) queda en los logs del
+  // servidor; al usuario solo se le muestra un mensaje accionable.
+  if (rawUpstream && (isPrismaFailure(rawUpstream) || (upstream && upstream >= 500))) {
+    logger.error(
+      { step, upstreamStatus: upstream, upstream: rawUpstream.slice(0, 2000) },
+      'Respuesta de error de Evolution API'
+    );
+  }
   const out = new Error(
     `Evolution API: fallo "${step}"${upstream ? ` (HTTP ${upstream})` : ''}: ${upstreamMessage(err)}`
   );
