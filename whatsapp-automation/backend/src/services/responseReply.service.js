@@ -55,6 +55,7 @@ async function buildReply({ customer, conversation, expectedInboundId = null }) 
       })
     : null;
   let source = 'AI';
+  let transfer = false;
 
   if (!replyText) {
     const template = rulesService.generateReply(classification, customer.name);
@@ -72,9 +73,19 @@ async function buildReply({ customer, conversation, expectedInboundId = null }) 
     source = 'RULES';
   }
 
+  // La IA marca [ASESOR] cuando corresponde pasar el chat a una persona. El
+  // marcador nunca debe llegar al cliente: se limpia y se avisa al procesador
+  // para que deje la conversacion en modo HUMAN despues de encolar la respuesta.
+  if (source === 'AI' && typeof aiService.splitTransfer === 'function') {
+    const split = aiService.splitTransfer(replyText);
+    replyText = split.text || replyText;
+    transfer = split.transfer;
+  }
+
   return {
     text: replyText,
     source,
+    transfer,
     classification,
     history,
     inbound: latestInbound,

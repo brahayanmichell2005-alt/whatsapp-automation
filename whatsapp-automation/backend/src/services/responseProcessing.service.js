@@ -127,6 +127,24 @@ async function processJob(job) {
       return { outcome: 'stale', jobId: job.id, queueId: queueItem.id };
     }
 
+    // Transferencia a asesor humano: la respuesta ya quedo encolada (el
+    // cliente recibe el aviso) y desde ahora el bot no vuelve a contestar en
+    // esta conversacion. Se hace despues de encolar para que el propio aviso
+    // no se cancele por el cambio a HUMAN.
+    if (reply.transfer && conversationNow.status !== 'HUMAN') {
+      try {
+        await conversationModel.updateStatus(conversationNow.id, 'HUMAN');
+        await logModel.record({
+          eventType: 'transfer_to_human',
+          level: 'WARN',
+          message: `Transferencia a asesor humano: ${customer.phone} (la IA aviso al cliente)`,
+          metadata: { jobId: job.id, customerId: customer.id, conversationId: conversationNow.id },
+        });
+      } catch (err) {
+        logger.error({ err: err.message, jobId: job.id }, 'No se pudo pasar la conversacion a modo HUMAN');
+      }
+    }
+
     await logModel.record({
       eventType: 'response_generated',
       level: 'INFO',
