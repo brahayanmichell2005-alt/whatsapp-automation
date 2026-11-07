@@ -65,28 +65,17 @@ function lintAllCalls(label) {
 // ----------------------------------------------------------- casos por modelo
 const NOW = new Date('2026-09-19T15:00:00Z');
 
-// Funciones puras: no acceden a la base de datos, asi que no tienen consultas
-// que revisar. Se cubren con pruebas de comportamiento mas abajo.
-const PURE_FNS = {
-  'models/customer.model.js': ['isUsableName'],
-};
-
 const CASES = {
   'models/customer.model.js': {
     findByPhone: [['51999000111']],
     findById: [[1]],
     create: [[{ phone: '51999000111', name: 'Ana', email: 'a@a.com' }]],
     findOrCreateByPhone: [['51999000111', 'Ana']],
-    setName: [[1, 'Ana']],
     updateClassification: [[1, { interestType: 'PRODUCTO', interestLevel: 'ALTO' }]],
     touchLastMessage: [[1]],
     list: [[{ limit: 10, offset: 0 }], [undefined]],
-    listByIds: [[[1, 2, 3]]],
     update: [[1, { name: 'Ana', status: 'BLOCKED', interest_type: 'SERVICIO', evil: 'x' }], [1, {}]],
     remove: [[1]],
-    ensureAiProfile: [[]],
-    updateAiProfile: [[1, 'Resumen de la conversación']],
-    getAiProfile: [[1]],
   },
   'models/conversation.model.js': {
     findById: [[1]],
@@ -95,81 +84,31 @@ const CASES = {
     findOrCreateOpenByCustomer: [[1]],
     touchLastMessage: [[1]],
     updateStatus: [[1, 'CLOSED'], [1, 'HUMAN', { assignedTo: 3 }], [1, 'OPEN', { assignedTo: null }]],
-    takeOver: [[1], [1, { userId: 3, reason: 'manual' }]],
-    releaseBot: [[1]],
     list: [[{ status: 'OPEN', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
-    listForChat: [[{ limit: 5, offset: 0 }], [undefined]],
   },
   'models/message.model.js': {
     findById: [[1]],
     findByExternalId: [['ABC']],
     create: [[{ conversationId: 1, customerId: 1, direction: 'INBOUND', content: 'hola', externalMessageId: 'X' }]],
     updateStatus: [[1, 'SENT'], [1, 'READ']],
-    remove: [[1]],
     listByConversation: [[1, { limit: 10, offset: 0 }]],
-    countByConversation: [[1]],
     listRecentByConversation: [[1, 20]],
     list: [[{ limit: 10, offset: 0 }]],
   },
   'models/messageQueue.model.js': {
     findById: [[1]],
-    findByIdempotencyKey: [['respjob:1:gen:1']],
-    isQueueItemCurrent: [[1, 2, 3]],
-    enqueue: [[{ customerId: 1, phone: '519', message: 'hola' }], [{ customerId: 1, phone: '519', message: 'hola', scheduledAt: NOW }], [{ customerId: 1, phone: '519', message: 'hola', idempotencyKey: 'k', responseJobId: 2, responseGeneration: 1 }]],
+    enqueue: [[{ customerId: 1, phone: '519', message: 'hola' }], [{ customerId: 1, phone: '519', message: 'hola', scheduledAt: NOW }]],
     findNextBatch: [[3]],
     markProcessing: [[1]],
     markSent: [[1]],
     markFailed: [[1, 'boom']],
-    markUncertain: [[1, 'timeout']],
-    markCancelled: [[1, 'stale']],
     incrementAttempt: [[1, 'boom']],
     cancelPendingByCustomer: [[1]],
-    cancelPendingByConversation: [[1]],
     requeueStale: [[5]],
     pauseAllPending: [[]],
     resumeAllPaused: [[]],
     cancelAllOpen: [[]],
     list: [[{ status: 'PENDING', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
-  },
-  'models/responseSettings.model.js': {
-    ensureGlobal: [[]],
-    updateGlobal: [[{ enabled: true, min_delay_seconds: 5 }], [{}, { actorId: 2 }]],
-    recordHistory: [[{ scope: 'GLOBAL', action: 'UPDATE_SETTINGS', actorId: 1, previous: { a: 1 }, next: { a: 2 }, reason: 'x' }], [{ scope: 'SYSTEM', action: 'tick' }]],
-    listHistory: [[{ limit: 10, offset: 0 }], [undefined]],
-  },
-  'models/customerResponseSetting.model.js': {
-    findByCustomer: [[1]],
-    upsert: [[1, { enabled: true, min_delay_seconds: 5 }], [1, { paused: true }, { actorId: 2 }]],
-    remove: [[1]],
-    touchLastReply: [[1]],
-    list: [[]],
-  },
-  'models/responseJob.model.js': {
-    schedule: [[{ customerId: 1, conversationId: 2, latestInboundMessageId: 3, idempotencyKey: 'k', priority: 1, dueAt: NOW, maxAttempts: 3 }]],
-    findById: [[1]],
-    findOpenByConversation: [[2]],
-    findDue: [[3]],
-    findEarliestDue: [[]],
-    claim: [[1, 120]],
-    stillCurrent: [[1, 2]],
-    markQueued: [[1, 2, 3, 'texto']],
-    releaseClaim: [[1, 2, 'pausa']],
-    markSentFromQueue: [[1]],
-    markFailedFromQueue: [[1, 'boom']],
-    markUncertainFromQueue: [[1, 'timeout']],
-    markCancelled: [[1, 'motivo']],
-    markCancelledGeneration: [[1, 2, 'motivo']],
-    cancelOpenByConversation: [[1, 'motivo']],
-    cancelOpenByCustomer: [[1, 'motivo']],
-    cancelAllOpen: [['motivo']],
-    pauseOpen: [[]],
-    cancelStalePaused: [[600]],
-    resumePaused: [[1]],
-    requeueStale: [[5]],
-    incrementFailure: [[1, 'boom', 3, 10]],
-    retryFailed: [[1]],
-    list: [[{ status: 'PENDING', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
-    stats: [[]],
   },
   'models/scheduledMessage.model.js': {
     findById: [[1]],
@@ -238,10 +177,7 @@ describe('SQL de los modelos (PostgreSQL)', () => {
 
   test('todas las funciones exportadas por los modelos estan cubiertas', () => {
     for (const [file, fns] of Object.entries(CASES)) {
-      const pure = PURE_FNS[file] || [];
-      const exported = Object.keys(load(file))
-        .filter((key) => typeof load(file)[key] === 'function' && !pure.includes(key))
-        .sort();
+      const exported = Object.keys(load(file)).sort();
       assert.deepEqual(Object.keys(fns).sort(), exported, `funciones sin caso de prueba en ${file}`);
     }
   });
@@ -266,23 +202,11 @@ describe('Comportamiento de los modelos', () => {
     assert.equal(await load('models/conversation.model.js').findById(99), null);
   });
 
-  test('findOrCreateByPhone: existente con nombre util -> no inserta ni actualiza', async () => {
-    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519', name: 'Ana' }], rowCount: 1 });
+  test('findOrCreateByPhone: existente -> no inserta', async () => {
+    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519' }], rowCount: 1 });
     const row = await load('models/customer.model.js').findOrCreateByPhone('519', 'Ana');
     assert.equal(row.id, 7);
     assert.equal(fakePg.calls.length, 1);
-  });
-
-  test('findOrCreateByPhone: existente sin nombre -> guarda el pushName util', async () => {
-    const answers = [
-      { rows: [{ id: 7, phone: '519', name: '.' }], rowCount: 1 }, // SELECT inicial
-      { rows: [{ id: 7, phone: '519', name: 'Ana' }], rowCount: 1 }, // UPDATE del nombre
-    ];
-    fakePg.handler = async () => answers.shift();
-    const row = await load('models/customer.model.js').findOrCreateByPhone('519', 'Ana');
-    assert.equal(row.name, 'Ana');
-    assert.equal(fakePg.calls.length, 2);
-    assert.match(fakePg.calls[1].text, /UPDATE customers SET name = \$1/);
   });
 
   test('findOrCreateByPhone: carrera (otro webhook lo creo primero) -> relee sin fallar', async () => {
@@ -295,19 +219,6 @@ describe('Comportamiento de los modelos', () => {
     const row = await load('models/customer.model.js').findOrCreateByPhone('519');
     assert.equal(row.id, 5);
     assert.match(fakePg.calls[1].text, /ON CONFLICT \(phone\) DO NOTHING/);
-  });
-
-  test('isUsableName descarta nombres vacios o de relleno', async () => {
-    const { isUsableName } = load('models/customer.model.js');
-    for (const value of ['Ana', 'José', 'A1', 'Ma ']) assert.equal(isUsableName(value), true, String(value));
-    for (const value of ['', ' ', '.', '..', '-', '12', '123456', null, undefined, 42])
-      assert.equal(isUsableName(value), false, String(value));
-  });
-
-  test('listByIds sin ids no consulta y devuelve lista vacia', async () => {
-    const rows = await load('models/customer.model.js').listByIds([]);
-    assert.deepEqual(rows, []);
-    assert.equal(fakePg.calls.length, 0);
   });
 
   test('las listas con fechas anulables usan NULLS LAST (como MySQL)', async () => {

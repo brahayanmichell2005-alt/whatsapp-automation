@@ -50,23 +50,10 @@ const noop = () => {};
 const fakeLogger = { info: noop, warn: noop, error: noop, debug: noop, fatal: noop, trace: noop, child: () => fakeLogger };
 const fakePino = () => fakeLogger;
 
-const fakeAxios = {
-  handlers: {
-    get: async () => ({ data: {} }),
-    post: async () => ({ data: {} }),
-    delete: async () => ({ data: {} }),
-  },
-  reset() {
-    this.handlers.get = async () => ({ data: {} });
-    this.handlers.post = async () => ({ data: {} });
-    this.handlers.delete = async () => ({ data: {} });
-  },
-};
-
 const fakeAxiosClient = {
-  get: (...args) => fakeAxios.handlers.get(...args),
-  post: (...args) => fakeAxios.handlers.post(...args),
-  delete: (...args) => fakeAxios.handlers.delete(...args),
+  get: async () => ({ data: {} }),
+  post: async () => ({ data: {} }),
+  delete: async () => ({ data: {} }),
 };
 
 const stubs = {
@@ -113,4 +100,4 @@ function inject(rel, exports) {
   require.cache[file] = { id: file, filename: file, loaded: true, exports, children: [], paths: [] };
 }
 
-module.exports = { fakePg, fakeAxios, fakeLogger, freshSrc, setEnv, src, load, inject, SRC };
+module.exports = { fakePg, fakeLogger, freshSrc, setEnv, src, load, inject, SRC };

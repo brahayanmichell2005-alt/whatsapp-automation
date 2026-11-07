@@ -1,0 +1,599 @@
+﻿<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Pro – Automation Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css" />
+  <script>
+    // Tema antes del render para evitar parpadeo
+    (function () { try { if (localStorage.getItem('wa_theme') === 'light') document.documentElement.classList.remove('dark'); } catch (e) {} })();
+  </script>
+</head>
+<body>
+  <!-- ==================== LOGIN ==================== -->
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-form">
+      <div class="login-logo">📱</div>
+      <h1>WhatsApp Pro</h1>
+      <p class="subtitle">Automation Suite · Panel administrativo</p>
+      <input type="email" id="login-email" placeholder="Correo" required />
+      <input type="password" id="login-password" placeholder="Contraseña" required />
+      <button type="submit" class="btn btn-primary">Ingresar</button>
+      <p id="login-error" class="error-text"></p>
+    </form>
+  </div>
+
+  <!-- ==================== APP ==================== -->
+  <div id="app" class="app hidden">
+    <div class="layout">
+
+      <!-- ---------- Sidebar ---------- -->
+      <aside class="sidebar">
+        <button type="button" class="sb-brand" data-tab="tab-dashboard">
+          <span class="sb-logo">📱</span>
+          <span class="sb-brand-text">
+            <strong>WhatsApp Pro</strong>
+            <em>Automation Suite</em>
+          </span>
+        </button>
+
+        <div class="sb-conn-wrap">
+          <button type="button" class="sb-conn off" id="sb-conn" data-tab="tab-qr" title="Estado de la sesión de WhatsApp">
+            <span class="sb-conn-dot" id="sb-conn-dot"></span>
+            <span class="sb-conn-text" id="sb-conn-text">Sesión Desconectada</span>
+            <span class="sb-conn-label" id="sb-conn-label">Vincular</span>
+          </button>
+        </div>
+
+        <nav class="sb-nav">
+          <span class="sb-group">Principal</span>
+          <button class="tab-btn active" data-tab="tab-dashboard"><span class="sb-ico">📊</span>Panel de Control</button>
+          <button class="tab-btn" data-tab="tab-campaigns"><span class="sb-ico">âœˆï¸</span>Campañas Masivas</button>
+          <button class="tab-btn" data-tab="tab-bot"><span class="sb-ico">🤖</span>Chatbot &amp; Reglas</button>
+          <button class="tab-btn" data-tab="tab-customers"><span class="sb-ico">👥</span>Contactos<span class="tab-badge" id="contacts-count-badge" hidden></span></button>
+
+          <span class="sb-group">Mensajería</span>
+          <button class="tab-btn" data-tab="tab-chat"><span class="sb-ico">💬</span>Bandeja en Vivo<span class="tab-badge" id="chat-unread-badge" hidden></span></button>
+          <button class="tab-btn" data-tab="tab-conversations"><span class="sb-ico">ðŸ—‚ï¸</span>Conversaciones</button>
+
+          <span class="sb-group">Sistema</span>
+          <button class="tab-btn" data-tab="tab-qr"><span class="sb-ico">🔗</span>Conexión WhatsApp</button>
+          <button class="tab-btn" data-tab="tab-queue"><span class="sb-ico">🚚</span>Cola de Envíos<span class="tab-badge amber" id="cola-count-badge" hidden></span></button>
+          <button class="tab-btn" data-tab="tab-scheduled"><span class="sb-ico">â°</span>Programados</button>
+          <button class="tab-btn" data-tab="tab-logs"><span class="sb-ico">📜</span>Registros</button>
+        </nav>
+
+        <div class="sb-foot">
+          <div class="sb-queue-box">
+            <div class="sb-queue-top"><span>Cola de salida</span><span class="mono" id="sb-queue-num">0</span></div>
+            <div class="sb-queue-bar"><div id="sb-queue-fill"></div></div>
+            <div class="sb-queue-note">pendientes de enviar</div>
+          </div>
+          <div class="sb-user">
+            <div class="sb-avatar">BM</div>
+            <div class="sb-user-text">
+              <strong>Administrador</strong>
+              <em>Admin Pro</em>
+            </div>
+            <button type="button" id="btn-theme" class="sb-theme" title="Alternar tema claro / oscuro">â˜€ï¸</button>
+            <button type="button" id="btn-logout" class="sb-theme" title="Cerrar sesión">â»</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ---------- Columna principal ---------- -->
+      <div class="main-wrap">
+        <header class="topbar">
+          <div class="crumb">
+            <strong>WhatsApp Pro</strong>
+            <span class="crumb-sep">/</span>
+            <span id="crumb-view">Panel de Control</span>
+          </div>
+          <div class="top-meta">
+            <span>Instancia: <strong id="top-instance">—</strong></span>
+            <span class="top-sep">·</span>
+            <span>Modo: <strong id="top-mode">—</strong></span>
+          </div>
+          <div class="top-actions">
+            <button type="button" id="btn-refresh" class="top-btn" title="Sincronizar datos">⟳</button>
+            <button type="button" id="btn-primary" class="btn btn-amber" data-tab="tab-qr">🔗 Vincular WhatsApp</button>
+          </div>
+        </header>
+
+        <main class="views">
+          <!-- ============ PANEL DE CONTROL ============ -->
+          <section id="tab-dashboard" class="tab-panel">
+            <div class="kpi-grid">
+              <div class="card kpi">
+                <div class="kpi-top"><span>Enviados</span><span class="kpi-ico">➤</span></div>
+                <div class="kpi-num mono" id="kpi-sent">—</div>
+                <div class="kpi-note" id="kpi-sent-note">mensajes salientes registrados</div>
+              </div>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Tasa de respuesta</span><span class="kpi-ico">↩</span></div>
+                <div class="kpi-num mono emerald" id="kpi-response">—</div>
+                <div class="kpi-note">chats atendidos, últimos 7 días</div>
+              </div>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Chats activos</span><span class="kpi-ico">💬</span></div>
+                <div class="kpi-num mono" id="kpi-chats">—</div>
+                <div class="kpi-note">con actividad en 24 horas</div>
+              </div>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Contactos activos</span><span class="kpi-ico">👥</span></div>
+                <div class="kpi-num mono" id="kpi-contacts">—</div>
+                <div class="kpi-note">en la base de datos</div>
+              </div>
+            </div>
+
+            <div class="dash-row">
+              <div class="card dash-chart">
+                <div class="section-head tight">
+                  <div>
+                    <h2>Actividad de mensajes</h2>
+                    <p class="section-sub">Últimos 7 días · datos reales de la base</p>
+                  </div>
+                  <div class="chart-legend">
+                    <span><i class="lg-out"></i>Enviados</span>
+                    <span><i class="lg-in"></i>Recibidos</span>
+                  </div>
+                </div>
+                <div id="dash-chart-body" class="chart-body">
+                  <p class="empty-note">Cargando actividad...</p>
+                </div>
+              </div>
+
+              <div class="card dash-system">
+                <div class="section-head tight">
+                  <div>
+                    <h2>Estado del sistema</h2>
+                    <p class="section-sub">Servicios en vivo</p>
+                  </div>
+                </div>
+                <div class="sys-row"><span class="sys-ico">⬢</span><div><strong>Backend Gateway</strong><em>Node.js Express · Vercel</em></div><span class="status-badge" id="status-backend">...</span></div>
+                <div class="sys-row"><span class="sys-ico">â›</span><div><strong>Base de datos</strong><em>Supabase Postgres</em></div><span class="status-badge" id="status-database">...</span></div>
+                <div class="sys-row"><span class="sys-ico">📱</span><div><strong>WhatsApp</strong><em id="wa-phone-note">Sin sesión activa</em></div><span class="status-badge" id="status-whatsapp">...</span></div>
+                <div class="sys-queue">
+                  <div class="sys-queue-top"><span>Cola de salida</span><strong class="mono" id="sys-queue-num">—</strong></div>
+                  <p class="sys-queue-note" id="sys-queue-note">mensajes pendientes de envío</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Campañas recientes</h2>
+                  <p class="section-sub">Progreso real leído de la cola de salida</p>
+                </div>
+                <button type="button" class="btn btn-secondary" data-tab="tab-campaigns">Ver todas</button>
+              </div>
+              <div id="campaigns-recent"><p class="empty-note">Cargando campañas...</p></div>
+            </div>
+          </section>
+
+          <!-- ============ CAMPAÑAS ============ -->
+          <section id="tab-campaigns" class="tab-panel hidden">
+            <div class="camp-layout">
+              <!-- Constructor -->
+              <div class="card camp-builder">
+                <div class="section-head tight">
+                  <div>
+                    <h2>âœˆï¸ Nueva Campaña</h2>
+                    <p class="section-sub">Se encola un mensaje por cliente y el worker los envía con límites anti-ban</p>
+                  </div>
+                </div>
+
+                <label class="field-label">Nombre de la campaña</label>
+                <input type="text" id="cp-name" placeholder="ej. Promo de temporada noviembre" maxlength="120" />
+
+                <label class="field-label">Mensaje</label>
+                <div class="cp-var-row">
+                  <span class="field-label tight">Variables:</span>
+                  <button type="button" class="chip-btn" data-cpvar="nombre">＋ {{nombre}}</button>
+                  <button type="button" class="chip-btn" data-cpvar="telefono">＋ {{telefono}}</button>
+                </div>
+                <textarea id="cp-message" rows="6" placeholder="Hola {{nombre}}, tenemos una promo especial para ti..."></textarea>
+                <span class="field-hint mono" id="cp-count">0 / 4096</span>
+
+                <label class="field-label">Audiencia</label>
+                <select id="cp-mode">
+                  <option value="ALL">Todos los contactos activos</option>
+                  <option value="FILTER">Filtrar por estado / interés</option>
+                  <option value="LIST">Selección manual</option>
+                </select>
+
+                <div id="cp-filter-box" class="cp-box hidden">
+                  <span class="field-label tight">Estados</span>
+                  <div class="chk-row">
+                    <label class="chk"><input type="checkbox" value="ACTIVE" checked /> Activos</label>
+                    <label class="chk"><input type="checkbox" value="BLOCKED" /> Bloqueados</label>
+                    <label class="chk"><input type="checkbox" value="ARCHIVED" /> Archivados</label>
+                  </div>
+                  <span class="field-label tight">Interés</span>
+                  <div class="chk-row">
+                    <label class="chk"><input type="checkbox" value="PRODUCTO" /> Producto</label>
+                    <label class="chk"><input type="checkbox" value="SERVICIO" /> Servicio</label>
+                    <label class="chk"><input type="checkbox" value="INDECISO" /> Indeciso</label>
+                  </div>
+                </div>
+
+                <div id="cp-list-box" class="cp-box hidden">
+                  <input type="search" id="cp-list-search" placeholder="Buscar contacto para agregar..." autocomplete="off" />
+                  <div id="cp-list" class="cp-list"><p class="empty-note">Cargando contactos...</p></div>
+                  <div class="cp-list-sum" id="cp-list-sum">0 seleccionados</div>
+                </div>
+
+                <div class="cp-aud-sum" id="cp-aud-sum">Audiencia: —</div>
+
+                <div class="cp-send-row">
+                  <div class="wa-phone mini"><div class="wa-chat-bg"><div class="wa-bubble"><div class="wa-bubble-body" id="cp-preview">Escribe el mensaje para ver la vista previa...</div><div class="wa-bubble-meta"><span class="checks">✓✓</span><span>1:42</span></div></div></div></div>
+                  <button type="button" id="cp-send" class="btn btn-primary btn-lg">âœˆï¸ Lanzar campaña</button>
+                </div>
+              </div>
+
+              <!-- Lista de campanas -->
+              <div class="card camp-list">
+                <div class="section-head">
+                  <div>
+                    <h2>Campañas</h2>
+                    <p class="section-sub">El progreso se lee de la cola en tiempo real</p>
+                  </div>
+                  <button type="button" class="top-btn" id="cp-reload" title="Actualizar">⟳</button>
+                </div>
+                <div id="campaigns-list"><p class="empty-note">Cargando campañas...</p></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ CHATBOT & REGLAS ============ -->
+          <section id="tab-bot" class="tab-panel hidden">
+            <div class="bot-grid">
+              <div class="card">
+                <div class="section-head tight">
+                  <div>
+                    <h2>🤖 Reglas de respuesta automática</h2>
+                    <p class="section-sub">Cuando el mensaje del cliente coincide, la regla responde ANTES que la IA</p>
+                  </div>
+                </div>
+                <div class="rule-form">
+                  <div class="grid-3">
+                    <div>
+                      <label class="field-label">Disparador</label>
+                      <select id="rule-type">
+                        <option value="CONTAINS">Cuando contenga la palabra</option>
+                        <option value="EXACT">Coincidencia exacta</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label">Palabra clave</label>
+                      <input type="text" id="rule-keyword" placeholder="ej. precio" maxlength="200" />
+                    </div>
+                    <div>
+                      <label class="field-label">Prioridad (menor = antes)</label>
+                      <input type="text" id="rule-priority" class="mono" value="100" inputmode="numeric" />
+                    </div>
+                  </div>
+                  <label class="field-label">Respuesta automática (usa {{nombre}})</label>
+                  <textarea id="rule-reply" rows="2" placeholder="Hola {{nombre}}, con gusto te paso la información..." maxlength="1024"></textarea>
+                  <button type="button" id="rule-add" class="btn btn-primary">＋ Crear regla</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table" id="table-rules">
+                    <thead><tr><th>Palabra clave</th><th>Disparador</th><th>Respuesta</th><th>Disparos</th><th>Activa</th><th></th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="bot-side">
+                <div class="card">
+                  <div class="section-head tight">
+                    <div>
+                      <h2>🧪 Probar reglas</h2>
+                      <p class="section-sub">Escribe un mensaje y mira qué respondería el bot (no se envía nada)</p>
+                    </div>
+                  </div>
+                  <input type="text" id="bot-test-input" placeholder="ej. Hola, cual es el precio?" maxlength="500" />
+                  <button type="button" id="bot-test-run" class="btn btn-secondary">Probar respuesta</button>
+                  <div id="bot-test-result" class="bot-test-result hidden"></div>
+                </div>
+
+                <div class="card">
+                  <div class="section-head tight">
+                    <div>
+                      <h2>⚡ Control de automatización</h2>
+                      <p class="section-sub">Estado actual: <strong id="automation-status" class="mono">-</strong></p>
+                    </div>
+                  </div>
+                  <div class="btn-row">
+                    <button class="btn btn-primary" data-automation="activate">Activar</button>
+                    <button class="btn btn-secondary" data-automation="pause">Pausar</button>
+                    <button class="btn btn-danger" data-automation="stop">Detener</button>
+                    <button class="btn btn-primary" data-automation="resume">Reanudar</button>
+                  </div>
+                  <div class="telemetry-grid">
+                    <div><span class="tel-label">Cola</span><span class="tel-value mono">Worker por cron</span></div>
+                    <div><span class="tel-label">Webhooks</span><span class="tel-value mono">/api/webhooks</span></div>
+                    <div><span class="tel-label">Anti-ban</span><span class="tel-value mono ok">Intervalos</span></div>
+                    <div><span class="tel-label">Zona horaria</span><span class="tel-value mono">America/Lima</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ CONTACTOS ============ -->
+          <section id="tab-customers" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Contactos &amp; Listas</h2>
+                  <p class="section-sub">Directorio real de tu base de datos para campañas y envíos</p>
+                </div>
+                <div class="btn-row">
+                  <button type="button" id="btn-cust-csv" class="btn btn-secondary">â¬†ï¸ Importar CSV</button>
+                  <button type="button" id="btn-cust-new" class="btn btn-primary">＋ Nuevo contacto</button>
+                </div>
+              </div>
+              <!-- Embudo de ventas (estilo Kanban): clientes por etapa -->
+              <div class="funnel-board" id="funnel-board"><p class="empty-note">Cargando embudo...</p></div>
+              <div class="list-toolbar">
+                <input type="search" id="cust-search" placeholder="Buscar por nombre o teléfono..." autocomplete="off" />
+                <select id="cust-filter-status">
+                  <option value="ALL">Todos los estados</option>
+                  <option value="ACTIVE">Activos</option>
+                  <option value="BLOCKED">Bloqueados</option>
+                  <option value="ARCHIVED">Archivados</option>
+                </select>
+                <select id="cust-filter-interest">
+                  <option value="ALL">Todo interés</option>
+                  <option value="PRODUCTO">Producto</option>
+                  <option value="SERVICIO">Servicio</option>
+                  <option value="INDECISO">Indeciso</option>
+                </select>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-customers">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Nombre</th><th>Estado</th><th>Interes</th><th>Ultimo mensaje</th><th>Etapa</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ BANDEJA EN VIVO ============ -->
+          <section id="tab-chat" class="tab-panel hidden">
+            <div class="chat-toolbar">
+              <input type="search" id="chat-search" placeholder="Buscar conversacion..." autocomplete="off" />
+              <span class="chat-conn" id="chat-conn" title="Estado de WhatsApp">â— conectando...</span>
+            </div>
+            <div class="chat-layout">
+              <aside class="chat-list" id="chat-list"></aside>
+              <div class="chat-main">
+                <div class="chat-header">
+                  <div class="chat-header-info">
+                    <div id="chat-header">Selecciona una conversacion</div>
+                    <div class="chat-sub" id="chat-sub"></div>
+                  </div>
+                  <div class="btn-row chat-header-actions">
+                    <select id="chat-stage" class="chat-mode" title="Etapa de embudo del cliente">
+                    <option value="NUEVO">🆕 Nuevo</option>
+                    <option value="NEGOCIANDO">🤝 Negociando</option>
+                    <option value="CERRADO">🏆 Cerrado</option>
+                  </select>
+                  <select id="chat-mode" class="chat-mode" title="Modo de atencion de esta conversacion">
+                      <option value="OPEN">🤖 Automatico</option>
+                      <option value="HUMAN">🙋 Humano</option>
+                      <option value="CLOSED">âœ”ï¸ Cerrada</option>
+                    </select>
+                    <button id="btn-pin" class="btn btn-secondary" title="Anclar arriba en la bandeja">📌</button>
+                <button id="btn-suggest" class="btn btn-secondary" title="La IA propone una respuesta (no se envia)">✨ Sugerir</button>
+                    <button id="btn-summary" class="btn btn-secondary" title="La IA resume la conversacion">📄 Resumen</button>
+                  </div>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                  <p class="chat-empty">Elige una conversacion de la lista.</p>
+                </div>
+                <div class="chat-ai" id="chat-ai" hidden></div>
+                <div class="quick-replies" id="quick-replies" hidden></div>
+                <form class="chat-inputbar" id="chat-form">
+                  <input type="text" id="chat-input" placeholder="Escribe como operador y presiona Enter..." autocomplete="off" maxlength="4096" />
+                  <button type="submit" class="btn btn-primary">Enviar</button>
+                </form>
+              </div>
+              <aside class="chat-context" id="chat-context">
+                <div id="chat-crm-card" class="crm-card"><p class="chat-empty">Elige una conversacion.</p></div>
+                <h3>Panel del asistente</h3>
+                <div id="chat-context-body"><p class="chat-empty">Elige una conversacion.</p></div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- ============ CONVERSACIONES ============ -->
+          <section id="tab-conversations" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Registro de Conversaciones</h2>
+                  <p class="section-sub">Historial de chats y su estado de atención</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-conversations">
+                  <thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Ultimo mensaje</th><th>Accion</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ CONEXION WHATSAPP ============ -->
+          <section id="tab-qr" class="tab-panel hidden">
+            <section class="card">
+              <div class="section-head tight">
+                <div>
+                  <h2>🔗 Conexión WhatsApp</h2>
+                  <p class="section-sub">Vincula tu dispositivo escaneando el QR o con código de emparejamiento</p>
+                </div>
+              </div>
+              <p class="note">Los mensajes entrantes y salientes se sincronizan en tiempo real. El estado de la sesión también se ve en la barra lateral.</p>
+              <div class="btn-row">
+                <button id="btn-qr" class="btn btn-primary">Generar código QR</button>
+                <button id="btn-disconnect" class="btn btn-secondary" hidden>Desconectar</button>
+              </div>
+              <div id="qr-container"></div>
+            </section>
+          </section>
+
+          <!-- ============ COLA ============ -->
+          <section id="tab-queue" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Cola de Mensajes de Salida</h2>
+                  <p class="section-sub">La cola se despacha automáticamente con el cron (respeta horarios y límites)</p>
+                </div>
+                <div class="btn-row">
+                  <button class="btn btn-primary" data-queue="resume">Reanudar cola</button>
+                  <button class="btn btn-secondary" data-queue="pause">Pausar cola</button>
+                  <button class="btn btn-danger" data-queue="stop">Detener cola</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-queue">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Estado</th><th>Intentos</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ PROGRAMADOS ============ -->
+          <section id="tab-scheduled" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Mensajes Programados</h2>
+                  <p class="section-sub">Se mueven a la cola cuando llega su hora (cron cada minuto)</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-scheduled">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Programado para</th><th>Estado</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ REGISTROS ============ -->
+          <section id="tab-logs" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Registros del Sistema</h2>
+                  <p class="section-sub">Eventos, envíos y errores en tiempo real</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table mono-table" id="table-logs">
+                  <thead><tr><th>Fecha</th><th>Nivel</th><th>Evento</th><th>Mensaje</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <footer class="app-footer">WhatsApp Pro Suite · Evolution API + Supabase + Gemini</footer>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL CONTACTO / CSV ==================== -->
+  <div id="modal-contact" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>＋ Nuevo contacto</h3>
+        <button type="button" class="modal-x" data-close="modal-contact">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Teléfono con código país *</label>
+        <input type="text" id="contact-phone" class="mono" placeholder="51984123456" />
+        <label class="field-label">Nombre</label>
+        <input type="text" id="contact-name" placeholder="ej. Carlos Mendoza" maxlength="80" />
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-contact">Cancelar</button>
+        <button type="button" id="contact-save" class="btn btn-primary">Guardar contacto</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-csv" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>â¬†ï¸ Importar contactos desde CSV</h3>
+        <button type="button" class="modal-x" data-close="modal-csv">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="note">Formato: columnas <strong class="mono">phone</strong> y <strong class="mono">name</strong> (nombre opcional). Ejemplo:<br /><span class="mono">phone,name<br />51984123456,Carlos Mendoza<br />51987654321,María López</span></p>
+        <input type="file" id="csv-file" accept=".csv,text/csv" />
+        <div id="csv-progress" class="csv-progress hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-csv">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notificacion toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ==================== NOVA (asistente flotante) ==================== -->
+  <div id="ai-widget">
+    <div id="ai-chat" class="ai-chat hidden" role="dialog" aria-label="Asistente virtual">
+      <div class="ai-chat-header">
+        <div class="ai-chat-avatar">🤖</div>
+        <div class="ai-chat-title">
+          <strong>Nova</strong>
+          <span id="ai-chat-status">Asistente del panel</span>
+        </div>
+        <div class="ai-chat-actions">
+          <button type="button" id="ai-min" title="Minimizar">—</button>
+          <button type="button" id="ai-close" title="Cerrar">✕</button>
+        </div>
+      </div>
+      <div class="ai-chat-msgs" id="ai-msgs"></div>
+      <div class="ai-typing hidden" id="ai-typing">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <em>Nova esta pensando...</em>
+      </div>
+      <div class="ai-confirm hidden" id="ai-confirm"></div>
+      <form class="ai-chat-input" id="ai-form">
+        <label class="ai-attach" title="Adjuntar imagen o audio (hasta 15 MB)">📎
+          <input type="file" id="ai-file" accept="image/*,audio/*" hidden />
+        </label>
+        <input type="text" id="ai-input" placeholder="Pideme lo que necesites..." autocomplete="off" maxlength="6000" />
+        <button type="submit" id="ai-send" class="ai-send" title="Enviar">➤</button>
+      </form>
+    </div>
+    <button type="button" id="ai-fab" class="ai-fab" aria-label="Abrir asistente" title="Nova, tu asistente">
+      <span class="ai-fab-bot">🤖</span>
+      <span class="ai-fab-ring"></span>
+      <span class="ai-fab-dot hidden" id="ai-fab-dot"></span>
+    </button>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/assistant.js"></script>
+  <script src="js/pro.js"></script>
+</body>
+</html>
+
+

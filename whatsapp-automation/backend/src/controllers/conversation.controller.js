@@ -1,7 +1,6 @@
 // Controller de conversaciones (Seccion 8 y Seccion 34 - API REST).
 
 const conversationModel = require('../models/conversation.model');
-const responseControl = require('../services/responseControl.service');
 
 const VALID_STATUSES = ['OPEN', 'PENDING', 'HUMAN', 'CLOSED'];
 
@@ -50,37 +49,19 @@ async function update(req, res, next) {
       return res.status(400).json({ error: 'assigned_to debe ser el id numerico de un usuario' });
     }
 
-    // Pasar a HUMAN activa la atencion humana: desactiva el bot de esa
-    // conversacion e invalida cualquier respuesta automatica pendiente.
-    if (req.body.status === 'HUMAN' && existing.status !== 'HUMAN') {
-      const takeover = await responseControl.takeOverConversation({
-        conversationId: existing.id,
-        actor: req.user,
-        reason: req.body.reason || 'Atencion humana desde el panel',
-      });
-      if (req.body.assigned_to !== undefined) {
-        return res.json(
-          await conversationModel.updateStatus(existing.id, 'HUMAN', {
-            assignedTo: req.body.assigned_to,
-          })
-        );
-      }
-      return res.json(takeover.conversation);
-    }
-
-    // Reabrir una conversacion que estaba en atencion humana devuelve el
-    // control al bot de forma explicita.
-    if (existing.status === 'HUMAN' && req.body.status === 'OPEN') {
-      return res.json(await responseControl.releaseConversation({
-        conversationId: existing.id,
-        actor: req.user,
-      }));
-    }
-
     const updated = await conversationModel.updateStatus(
       req.params.id,
-      req.body.status || existing.status,
-      { assignedTo: req.body.assigned_to }
+      req.body.status !== undefined ? req.body.status : existing.status,
+      {
+        assignedTo: req.body.assigned_to,
+        // Anclar/desanclar en la bandeja (queda primera siempre).
+        pinned:
+          req.body.pinned === true || req.body.pinned === 'true'
+            ? true
+            : req.body.pinned === false || req.body.pinned === 'false'
+              ? false
+              : undefined,
+      }
     );
     res.json(updated);
   } catch (err) {

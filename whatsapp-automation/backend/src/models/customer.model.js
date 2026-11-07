@@ -145,7 +145,9 @@ async function listByIds(ids) {
 }
 
 async function update(id, fields) {
-  const allowed = ['name', 'email', 'status', 'interest_type', 'interest_level'];
+  // funnel_stage/notes/ai_paused: suite de ventas (embudo, notas, IA en pausa
+  // para clientes VIP). El controller valida los valores antes de llegar aqui.
+  const allowed = ['name', 'email', 'status', 'interest_type', 'interest_level', 'notes', 'funnel_stage', 'ai_paused'];
   const keys = Object.keys(fields).filter((k) => allowed.includes(k));
   if (keys.length === 0) return findById(id);
 

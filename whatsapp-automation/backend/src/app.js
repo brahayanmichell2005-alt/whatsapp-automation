@@ -21,11 +21,17 @@ const conversationRoutes = require('./routes/conversation.routes');
 const messageRoutes = require('./routes/message.routes');
 const queueRoutes = require('./routes/queue.routes');
 const automationRoutes = require('./routes/automation.routes');
-const responseControlRoutes = require('./routes/responseControl.routes');
 const scheduleRoutes = require('./routes/schedule.routes');
 const authRoutes = require('./routes/auth.routes');
 const cronRoutes = require('./routes/cron.routes');
 const extensionRoutes = require('./routes/extension.routes');
+const assistantChatRoutes = require('./routes/assistantChat.routes');
+const templateRoutes = require('./routes/template.routes');
+const campaignRoutes = require('./routes/campaign.routes');
+const botRuleRoutes = require('./routes/botRule.routes');
+const followUpRoutes = require('./routes/followUp.routes');
+const productRoutes = require('./routes/product.routes');
+const reservationRoutes = require('./routes/reservation.routes');
 
 const app = express();
 
@@ -61,6 +67,7 @@ app.use(express.static(path.join(__dirname, '../../public')));
 
 // Rutas
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/reservations', reservationRoutes);
 app.use('/api/instance', instanceRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/customers', customerRoutes);
@@ -68,11 +75,16 @@ app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/automation', automationRoutes);
-app.use('/api/response-control', responseControlRoutes);
 app.use('/api/scheduled-messages', scheduleRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/extension', extensionRoutes);
+app.use('/api/assistant', assistantChatRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/campaigns', campaignRoutes);
+app.use('/api/bot-rules', botRuleRoutes);
+app.use('/api/follow-ups', followUpRoutes);
+app.use('/api/products', productRoutes);
 
 // Nota: Si quieres que la raíz cargue el index.html en local en lugar del JSON, 
 // puedes descomentar la siguiente línea o dejar el endpoint de estado:

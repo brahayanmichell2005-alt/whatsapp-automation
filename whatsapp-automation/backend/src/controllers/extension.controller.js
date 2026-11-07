@@ -33,6 +33,10 @@ async function generateReply(req, res, next) {
     if (!reply) {
       reply = rulesService.generateReply(rulesService.classify(lastMessage), customerName.trim());
       source = 'RULES';
+    } else {
+      // La IA nunca debe exponer el marcador interno de transferencia al
+      // cliente (la extension no maneja modos HUMAN, solo muestra texto).
+      reply = aiService.splitTransfer(reply).text;
     }
 
     return res.json({ reply, source });

@@ -1,739 +1,676 @@
-<!DOCTYPE html>
-<html lang="es" data-theme="dark">
+﻿<!DOCTYPE html>
+<html lang="es" class="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="dark light" />
-  <meta name="description" content="Panel de administración de WhatsApp Automation: estado, clientes, conversaciones, cola y mensajes programados." />
-  <title>WhatsApp Automation · Panel</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2325d366'/%3E%3Cpath d='M9 8h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z' fill='%23052e16'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=5" />
+  <title>WhatsApp Pro – Automation Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css" />
   <script>
-    // Aplica el tema guardado antes del primer pintado (evita el destello).
-    try {
-      var savedTheme = localStorage.getItem('wa_theme');
-      var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-      document.documentElement.setAttribute('data-theme', savedTheme || (prefersLight ? 'light' : 'dark'));
-    } catch (e) { /* sin localStorage */ }
+    // Tema antes del render para evitar parpadeo
+    (function () { try { if (localStorage.getItem('wa_theme') === 'light') document.documentElement.classList.remove('dark'); } catch (e) {} })();
   </script>
 </head>
 <body>
-  <!-- ================= LOGIN ================= -->
+  <!-- ==================== LOGIN ==================== -->
   <div id="login-screen" class="login-screen">
-    <form id="login-form" class="login-card" autocomplete="on">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L4 20l1-4a8.4 8.4 0 1 1 16-4.5Z"/></svg>
-        </span>
-        <span class="brand-text">
-          <strong>WhatsApp Automation</strong>
-          <small>Panel administrativo</small>
-        </span>
-      </div>
-
-      <h1>Inicia sesión</h1>
-      <p class="subtitle">Accede con las credenciales de administrador.</p>
-
-      <label class="field">
-        <span>Correo electrónico</span>
-        <input type="email" id="login-email" placeholder="tu@correo.com" autocomplete="username" required autofocus />
-      </label>
-      <label class="field">
-        <span>Contraseña</span>
-        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" required />
-      </label>
-
-      <button type="submit" class="btn btn-primary btn-block" id="btn-login">Entrar</button>
-      <p id="login-error" class="alert alert-error hidden" role="alert"></p>
+    <form id="login-form" class="login-form">
+      <div class="login-logo">📱</div>
+      <h1>WhatsApp Pro</h1>
+      <p class="subtitle">Automation Suite · Panel administrativo</p>
+      <input type="email" id="login-email" placeholder="Correo" required />
+      <input type="password" id="login-password" placeholder="Contraseña" required />
+      <button type="submit" class="btn btn-primary">Ingresar</button>
+      <p id="login-error" class="error-text"></p>
     </form>
   </div>
 
-  <!-- ================= PANEL ================= -->
+  <!-- ==================== APP ==================== -->
   <div id="app" class="app hidden">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L4 20l1-4a8.4 8.4 0 1 1 16-4.5Z"/></svg>
-        </span>
-        <span class="brand-text">
-          <strong>WhatsApp Automation</strong>
-          <small id="last-updated">Cargando estado…</small>
-        </span>
-      </div>
+    <div class="layout">
 
-      <div class="topbar-actions">
-        <button class="btn btn-ghost btn-icon" id="btn-refresh" title="Actualizar datos" aria-label="Actualizar datos">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
-        </button>
-        <button class="btn btn-ghost btn-icon" id="btn-theme" title="Cambiar tema" aria-label="Cambiar tema">
-          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
-          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        </button>
-
-        <div class="user-chip" id="user-chip">
-          <span class="avatar" id="user-initials">?</span>
-          <span class="user-meta">
-            <strong id="user-name">Cuenta</strong>
-            <small id="user-email">—</small>
+      <!-- ---------- Sidebar ---------- -->
+      <aside class="sidebar">
+        <button type="button" class="sb-brand" data-tab="tab-dashboard">
+          <span class="sb-logo">📱</span>
+          <span class="sb-brand-text">
+            <strong>WhatsApp Pro</strong>
+            <em>Automation Suite</em>
           </span>
+        </button>
+
+        <div class="sb-conn-wrap">
+          <button type="button" class="sb-conn off" id="sb-conn" data-tab="tab-qr" title="Estado de la sesión de WhatsApp">
+            <span class="sb-conn-dot" id="sb-conn-dot"></span>
+            <span class="sb-conn-text" id="sb-conn-text">Sesión Desconectada</span>
+            <span class="sb-conn-label" id="sb-conn-label">Vincular</span>
+          </button>
         </div>
 
-        <button class="btn btn-ghost btn-sm" id="btn-logout">Salir</button>
-      </div>
-    </header>
+        <nav class="sb-nav">
+          <span class="sb-group">Principal</span>
+          <button class="tab-btn active" data-tab="tab-dashboard"><span class="sb-ico">📊</span>Panel de Control</button>
+          <button class="tab-btn" data-tab="tab-campaigns"><span class="sb-ico">✈️</span>Campañas Masivas</button>
+          <button class="tab-btn" data-tab="tab-bot"><span class="sb-ico">🤖</span>Chatbot &amp; Reglas</button>
+          <button class="tab-btn" data-tab="tab-customers"><span class="sb-ico">👥</span>Contactos<span class="tab-badge" id="contacts-count-badge" hidden></span></button>
+          <button class="tab-btn" data-tab="tab-products"><span class="sb-ico">🛒</span>Catálogo<span class="tab-badge" id="products-count-badge" hidden></span></button>
 
-    <nav class="tabs" role="tablist" aria-label="Secciones del panel">
-      <button class="tab-btn active" role="tab" aria-selected="true" data-tab="tab-dashboard">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h4l2 5 4-12 2 5h6"/></svg>
-        Estado
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-chat">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h.01M12 12h.01M16 12h.01"/><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L4 20l1-4a8.4 8.4 0 1 1 16-4.5Z"/></svg>
-        Chat en vivo
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-customers">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg>
-        Clientes
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-conversations">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L4 20l1-4a8.4 8.4 0 1 1 16-4.5Z"/></svg>
-        Conversaciones
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-queue">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="3"/></svg>
-        Cola
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-responses">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/><path d="M7 3.3A9 9 0 0 0 3.3 7M16.7 3.3A9 9 0 0 1 20.7 7"/></svg>
-        Respuestas
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-scheduled">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-        Programados
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-messages">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
-        Mensajes
-      </button>
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="tab-logs">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        Errores / Logs
-      </button>
-    </nav>
+          <span class="sb-group">Mensajería</span>
+          <button class="tab-btn" data-tab="tab-chat"><span class="sb-ico">💬</span>Bandeja en Vivo<span class="tab-badge" id="chat-unread-badge" hidden></span></button>
+          <button class="tab-btn" data-tab="tab-conversations"><span class="sb-ico">🗂️</span>Conversaciones</button>
 
-    <main>
-      <!-- ============ ESTADO ============ -->
-      <section id="tab-dashboard" class="tab-panel" role="tabpanel" aria-labelledby="tab-dashboard">
-        <div class="kpi-grid">
-          <article class="kpi">
-            <span class="kpi-label">Clientes</span>
-            <strong class="kpi-value" id="kpi-customers">–</strong>
-            <span class="kpi-hint">últimos 200</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Conversaciones activas</span>
-            <strong class="kpi-value" id="kpi-conversations">–</strong>
-            <span class="kpi-hint">abiertas o en atención</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">En cola</span>
-            <strong class="kpi-value" id="kpi-queue">–</strong>
-            <span class="kpi-hint">mensajes pendientes</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Errores</span>
-            <strong class="kpi-value" id="kpi-errors">–</strong>
-            <span class="kpi-hint">en los últimos 200 eventos</span>
-          </article>
-        </div>
+          <span class="sb-group">Sistema</span>
+          <button class="tab-btn" data-tab="tab-qr"><span class="sb-ico">🔗</span>Conexión WhatsApp</button>
+          <button class="tab-btn" data-tab="tab-queue"><span class="sb-ico">🚚</span>Cola de Envíos<span class="tab-badge amber" id="cola-count-badge" hidden></span></button>
+          <button class="tab-btn" data-tab="tab-scheduled"><span class="sb-ico">⏰</span>Programados</button>
+          <button class="tab-btn" data-tab="tab-reservations"><span class="sb-ico">📅</span>Reservas</button>
+          <button class="tab-btn" data-tab="tab-logs"><span class="sb-ico">📜</span>Registros</button>
+        </nav>
 
-        <div class="grid-2">
-          <section class="card">
-            <header class="card-head">
-              <h2>Estado del sistema</h2>
-              <span class="pill" id="health-pill">Comprobando…</span>
-            </header>
-            <ul class="status-list">
-              <li>
-                <span class="status-dot" id="dot-backend"></span>
-                <div class="status-text">
-                  <p class="status-name">Backend</p>
-                  <p class="status-detail" id="detail-backend">Comprobando…</p>
-                </div>
-                <span class="pill" id="status-backend">…</span>
-              </li>
-              <li>
-                <span class="status-dot" id="dot-database"></span>
-                <div class="status-text">
-                  <p class="status-name">Base de datos</p>
-                  <p class="status-detail" id="detail-database">Comprobando…</p>
-                </div>
-                <span class="pill" id="status-database">…</span>
-              </li>
-              <li>
-                <span class="status-dot" id="dot-whatsapp"></span>
-                <div class="status-text">
-                  <p class="status-name">WhatsApp</p>
-                  <p class="status-detail" id="detail-whatsapp">Comprobando…</p>
-                </div>
-                <span class="pill" id="status-whatsapp">…</span>
-              </li>
-            </ul>
-          </section>
-
-          <section class="card">
-            <header class="card-head">
-              <h2>Automatización</h2>
-              <span class="pill" id="automation-status">–</span>
-            </header>
-            <p class="muted" id="automation-hint">Consulta el estado del envío automático.</p>
-            <div class="btn-row">
-              <button class="btn btn-primary" data-automation="activate">Activar</button>
-              <button class="btn btn-ghost" data-automation="pause">Pausar</button>
-              <button class="btn btn-danger" data-automation="stop">Detener</button>
-              <button class="btn btn-ghost" data-automation="resume">Reanudar</button>
+        <div class="sb-foot">
+          <div class="sb-queue-box">
+            <div class="sb-queue-top"><span>Cola de salida</span><span class="mono" id="sb-queue-num">0</span></div>
+            <div class="sb-queue-bar"><div id="sb-queue-fill"></div></div>
+            <div class="sb-queue-note">pendientes de enviar</div>
+          </div>
+          <div class="sb-user">
+            <div class="sb-avatar">BM</div>
+            <div class="sb-user-text">
+              <strong>Administrador</strong>
+              <em>Admin Pro</em>
             </div>
-          </section>
-        </div>
-
-        <section class="card">
-          <header class="card-head">
-            <h2>Conexión de WhatsApp</h2>
-            <span class="pill" id="connection-pill">–</span>
-          </header>
-          <div class="connect-row">
-            <label class="field">
-              <span>Número para código de vinculación (opcional)</span>
-              <input id="pairing-number" inputmode="numeric" placeholder="51987654321" autocomplete="off" />
-            </label>
-            <div class="btn-row">
-              <button id="btn-qr" class="btn btn-primary">Conectar</button>
-              <button id="btn-disconnect" class="btn btn-ghost" hidden>Desconectar</button>
-            </div>
-          </div>
-          <div id="qr-container" class="qr-container" aria-live="polite"></div>
-        </section>
-      </section>
-
-      <!-- ============ CHAT EN VIVO ============ -->
-      <section id="tab-chat" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Chat en vivo</h2>
-            <p class="muted" id="live-chat-count">Cargando…</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="chat">Actualizar</button>
-        </div>
-
-        <p class="muted note">Los mensajes se actualizan solos cada 5 segundos. Con el botón de borrar quitas el mensaje del panel; si lo envió el bot, también se intenta borrar en WhatsApp para todos.</p>
-
-        <div class="live-chat-layout">
-          <aside class="live-chat-list" id="live-chat-list" aria-label="Conversaciones">
-            <p class="chat-empty">Cargando conversaciones…</p>
-          </aside>
-          <div class="live-chat-main">
-            <div class="live-chat-header" id="live-chat-header">Selecciona una conversación</div>
-            <div class="live-chat-messages" id="live-chat-messages" aria-live="polite">
-              <p class="chat-empty">Elige una conversación de la lista.</p>
-            </div>
+            <button type="button" id="btn-theme" class="sb-theme" title="Alternar tema claro / oscuro">☀️</button>
+            <button type="button" id="btn-logout" class="sb-theme" title="Cerrar sesión">⏻</button>
           </div>
         </div>
-      </section>
+      </aside>
 
-      <!-- ============ CLIENTES ============ -->
-      <section id="tab-customers" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Clientes</h2>
-            <p class="muted" id="customers-count">Cargando…</p>
+      <!-- ---------- Columna principal ---------- -->
+      <div class="main-wrap">
+        <header class="topbar">
+          <div class="crumb">
+            <strong>WhatsApp Pro</strong>
+            <span class="crumb-sep">/</span>
+            <span id="crumb-view">Panel de Control</span>
           </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="customers">Actualizar</button>
-        </div>
-
-        <details class="card form-card">
-          <summary><span class="btn btn-primary btn-sm">+ Nuevo cliente</span></summary>
-          <form id="form-customer" class="form-grid">
-            <label class="field">
-              <span>Teléfono *</span>
-              <input id="customer-phone" inputmode="tel" placeholder="51987654321" required />
-            </label>
-            <label class="field">
-              <span>Nombre</span>
-              <input id="customer-name" placeholder="Nombre del cliente" maxlength="150" />
-            </label>
-            <label class="field">
-              <span>Correo</span>
-              <input id="customer-email" type="email" placeholder="cliente@correo.com" maxlength="150" />
-            </label>
-            <div class="form-actions">
-              <button type="submit" class="btn btn-primary">Guardar cliente</button>
-            </div>
-          </form>
-        </details>
-
-        <div class="toolbar">
-          <label class="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input id="search-customers" placeholder="Buscar por teléfono, nombre o correo…" autocomplete="off" />
-          </label>
-        </div>
-
-        <div class="table-wrap card">
-          <table class="data-table" id="table-customers">
-            <thead><tr><th>Teléfono</th><th>Nombre</th><th>Estado</th><th>Interés</th><th>Último mensaje</th><th class="col-actions">Tiempo de respuesta</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ============ CONVERSACIONES ============ -->
-      <section id="tab-conversations" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Conversaciones</h2>
-            <p class="muted" id="conversations-count">Cargando…</p>
+          <div class="top-meta">
+            <span>Instancia: <strong id="top-instance">—</strong></span>
+            <span class="top-sep">·</span>
+            <span>Modo: <strong id="top-mode">—</strong></span>
           </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="conversations">Actualizar</button>
-        </div>
-
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Estado</span>
-            <select id="filter-conversations">
-              <option value="ALL">Todas</option>
-              <option value="OPEN">Abiertas</option>
-              <option value="PENDING">Pendientes</option>
-              <option value="HUMAN">Atención humana</option>
-              <option value="CLOSED">Cerradas</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="table-wrap card">
-          <table class="data-table" id="table-conversations">
-            <thead><tr><th>Cliente</th><th>Estado</th><th>Último mensaje</th><th class="col-actions">Acciones</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ============ COLA ============ -->
-      <section id="tab-queue" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Cola de mensajes</h2>
-            <p class="muted" id="queue-count">Cargando…</p>
+          <div class="top-actions">
+            <button type="button" id="btn-refresh" class="top-btn" title="Sincronizar datos">⟳</button>
+            <button type="button" id="btn-primary" class="btn btn-amber" data-tab="tab-qr">🔗 Vincular WhatsApp</button>
           </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="queue">Actualizar</button>
-        </div>
+        </header>
 
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Estado</span>
-            <select id="filter-queue">
-              <option value="ALL">Todos</option>
-              <option value="PENDING">Pendientes</option>
-              <option value="PROCESSING">Procesando</option>
-              <option value="SENT">Enviados</option>
-              <option value="FAILED">Fallidos</option>
-              <option value="PAUSED">Pausados</option>
-              <option value="CANCELLED">Cancelados</option>
-            </select>
-          </label>
-          <div class="btn-row">
-            <button class="btn btn-ghost btn-sm" data-queue="resume">Reanudar cola</button>
-            <button class="btn btn-ghost btn-sm" data-queue="pause">Pausar cola</button>
-            <button class="btn btn-danger btn-sm" data-queue="stop">Detener y cancelar</button>
-          </div>
-        </div>
-
-        <div class="table-wrap card">
-          <table class="data-table" id="table-queue">
-            <thead><tr><th>ID</th><th>Teléfono</th><th>Mensaje</th><th>Estado</th><th>Intentos</th><th>Creado</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ============ CONTROL DE RESPUESTAS ============ -->
-      <section id="tab-responses" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Control de respuestas automáticas</h2>
-            <p class="muted" id="response-summary">Cargando…</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="responses">Actualizar</button>
-        </div>
-
-        <div id="response-alerts" class="alerts" aria-live="polite"></div>
-
-        <div class="kpi-grid kpi-grid-5">
-          <article class="kpi">
-            <span class="kpi-label">Pendientes</span>
-            <strong class="kpi-value" id="resp-kpi-pending">–</strong>
-            <span class="kpi-hint">esperando su turno</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Procesando</span>
-            <strong class="kpi-value" id="resp-kpi-processing">–</strong>
-            <span class="kpi-hint">generando respuesta</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Enviadas hoy</span>
-            <strong class="kpi-value" id="resp-kpi-sent">–</strong>
-            <span class="kpi-hint">respuestas completadas</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Errores hoy</span>
-            <strong class="kpi-value" id="resp-kpi-failed">–</strong>
-            <span class="kpi-hint">fallos confirmados</span>
-          </article>
-          <article class="kpi">
-            <span class="kpi-label">Inciertas</span>
-            <strong class="kpi-value" id="resp-kpi-uncertain">–</strong>
-            <span class="kpi-hint">no se reintentan solas</span>
-          </article>
-        </div>
-
-        <div class="grid-2">
-          <section class="card">
-            <header class="card-head">
-              <h2>Configuración global</h2>
-              <span class="pill" id="response-status-pill">–</span>
-            </header>
-            <form id="form-response" class="form-grid form-grid-3" novalidate>
-              <label class="check-field field-wide">
-                <input type="checkbox" id="response-enabled" />
-                <span>Respuestas automáticas activas</span>
-              </label>
-              <label class="field">
-                <span>Espera mínima (s)</span>
-                <input id="response-min" type="number" min="0" max="600" step="1" required />
-                <small class="field-hint">0 a 600 s</small>
-              </label>
-              <label class="field">
-                <span>Espera máxima (s)</span>
-                <input id="response-max" type="number" min="0" max="900" step="1" required />
-                <small class="field-hint">0 a 900 s</small>
-              </label>
-              <label class="field">
-                <span>Agrupar mensajes (s)</span>
-                <input id="response-grouping" type="number" min="0" max="120" step="1" required />
-                <small class="field-hint">reinicia la espera con cada mensaje</small>
-              </label>
-              <label class="field">
-                <span>Respuestas simultáneas</span>
-                <input id="response-concurrency" type="number" min="1" max="10" step="1" required />
-                <small class="field-hint">1 a 10 conversaciones</small>
-              </label>
-              <label class="field">
-                <span>Alerta tras N errores</span>
-                <input id="response-threshold" type="number" min="1" max="100" step="1" required />
-                <small class="field-hint">por día</small>
-              </label>
-              <div class="form-actions field-wide">
-                <button type="submit" class="btn btn-primary" id="btn-save-response">Guardar configuración</button>
+        <main class="views">
+          <!-- ============ PANEL DE CONTROL ============ -->
+          <section id="tab-dashboard" class="tab-panel">
+            <div class="kpi-grid">
+              <div class="card kpi">
+                <div class="kpi-top"><span>Enviados</span><span class="kpi-ico">➤</span></div>
+                <div class="kpi-num mono" id="kpi-sent">—</div>
+                <div class="kpi-note" id="kpi-sent-note">mensajes salientes registrados</div>
               </div>
-            </form>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Tasa de respuesta</span><span class="kpi-ico">↩</span></div>
+                <div class="kpi-num mono emerald" id="kpi-response">—</div>
+                <div class="kpi-note">chats atendidos, últimos 7 días</div>
+              </div>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Chats activos</span><span class="kpi-ico">💬</span></div>
+                <div class="kpi-num mono" id="kpi-chats">—</div>
+                <div class="kpi-note">con actividad en 24 horas</div>
+              </div>
+              <div class="card kpi">
+                <div class="kpi-top"><span>Contactos activos</span><span class="kpi-ico">👥</span></div>
+                <div class="kpi-num mono" id="kpi-contacts">—</div>
+                <div class="kpi-note">en la base de datos</div>
+              </div>
+            </div>
 
-            <div class="btn-row response-controls">
-              <button class="btn btn-primary btn-sm" data-response-action="activate">Activar / reanudar</button>
-              <button class="btn btn-ghost btn-sm" data-response-action="pause">Pausar</button>
-              <button class="btn btn-danger btn-sm" data-response-action="stop">Detención de emergencia</button>
+            <div class="dash-row">
+              <div class="card dash-chart">
+                <div class="section-head tight">
+                  <div>
+                    <h2>Actividad de mensajes</h2>
+                    <p class="section-sub">Últimos 7 días · datos reales de la base</p>
+                  </div>
+                  <div class="chart-legend">
+                    <span><i class="lg-out"></i>Enviados</span>
+                    <span><i class="lg-in"></i>Recibidos</span>
+                  </div>
+                </div>
+                <div id="dash-chart-body" class="chart-body">
+                  <p class="empty-note">Cargando actividad...</p>
+                </div>
+              </div>
+
+              <div class="card dash-system">
+                <div class="section-head tight">
+                  <div>
+                    <h2>Estado del sistema</h2>
+                    <p class="section-sub">Servicios en vivo</p>
+                  </div>
+                </div>
+                <div class="sys-row"><span class="sys-ico">⬢</span><div><strong>Backend Gateway</strong><em>Node.js Express · Vercel</em></div><span class="status-badge" id="status-backend">...</span></div>
+                <div class="sys-row"><span class="sys-ico">⛁</span><div><strong>Base de datos</strong><em>Supabase Postgres</em></div><span class="status-badge" id="status-database">...</span></div>
+                <div class="sys-row"><span class="sys-ico">📱</span><div><strong>WhatsApp</strong><em id="wa-phone-note">Sin sesión activa</em></div><span class="status-badge" id="status-whatsapp">...</span></div>
+                <div class="sys-queue">
+                  <div class="sys-queue-top"><span>Cola de salida</span><strong class="mono" id="sys-queue-num">—</strong></div>
+                  <p class="sys-queue-note" id="sys-queue-note">mensajes pendientes de envío</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Campañas recientes</h2>
+                  <p class="section-sub">Progreso real leído de la cola de salida</p>
+                </div>
+                <button type="button" class="btn btn-secondary" data-tab="tab-campaigns">Ver todas</button>
+              </div>
+              <div id="campaigns-recent"><p class="empty-note">Cargando campañas...</p></div>
             </div>
           </section>
 
-          <section class="card">
-            <header class="card-head">
-              <h2>Cómo funciona</h2>
-              <span class="pill" id="response-mode-pill">–</span>
-            </header>
-            <ul class="status-list response-rules">
-              <li>
-                <span class="status-dot up"></span>
-                <div class="status-text">
-                  <p class="status-name">Un mensaje, una respuesta</p>
-                  <p class="status-detail">Los mensajes seguidos del mismo cliente se agrupan y reciben una sola respuesta contextual.</p>
+          <!-- ============ CAMPAÑAS ============ -->
+          <section id="tab-campaigns" class="tab-panel hidden">
+            <div class="camp-layout">
+              <!-- Constructor -->
+              <div class="card camp-builder">
+                <div class="section-head tight">
+                  <div>
+                    <h2>✈️ Nueva Campaña</h2>
+                    <p class="section-sub">Se encola un mensaje por cliente y el worker los envía con límites anti-ban</p>
+                  </div>
                 </div>
-              </li>
-              <li>
-                <span class="status-dot up"></span>
-                <div class="status-text">
-                  <p class="status-name">Espera configurable</p>
-                  <p class="status-detail">Cada cliente puede tener su propio tiempo; si no tiene configuración se usan los valores globales.</p>
+
+                <label class="field-label">Nombre de la campaña</label>
+                <input type="text" id="cp-name" placeholder="ej. Promo de temporada noviembre" maxlength="120" />
+
+                <label class="field-label">Mensaje</label>
+                <div class="cp-var-row">
+                  <span class="field-label tight">Variables:</span>
+                  <button type="button" class="chip-btn" data-cpvar="nombre">＋ {{nombre}}</button>
+                  <button type="button" class="chip-btn" data-cpvar="telefono">＋ {{telefono}}</button>
                 </div>
-              </li>
-              <li>
-                <span class="status-dot warn"></span>
-                <div class="status-text">
-                  <p class="status-name">Sin respuestas viejas</p>
-                  <p class="status-detail">Si llega un mensaje nuevo o una persona toma la conversación, la respuesta pendiente se invalida.</p>
+                <textarea id="cp-message" rows="6" placeholder="Hola {{nombre}}, tenemos una promo especial para ti..."></textarea>
+                <span class="field-hint mono" id="cp-count">0 / 4096</span>
+
+                <label class="field-label">Audiencia</label>
+                <select id="cp-mode">
+                  <option value="ALL">Todos los contactos activos</option>
+                  <option value="FILTER">Filtrar por estado / interés</option>
+                  <option value="LIST">Selección manual</option>
+                </select>
+
+                <div id="cp-filter-box" class="cp-box hidden">
+                  <span class="field-label tight">Estados</span>
+                  <div class="chk-row">
+                    <label class="chk"><input type="checkbox" value="ACTIVE" checked /> Activos</label>
+                    <label class="chk"><input type="checkbox" value="BLOCKED" /> Bloqueados</label>
+                    <label class="chk"><input type="checkbox" value="ARCHIVED" /> Archivados</label>
+                  </div>
+                  <span class="field-label tight">Interés</span>
+                  <div class="chk-row">
+                    <label class="chk"><input type="checkbox" value="PRODUCTO" /> Producto</label>
+                    <label class="chk"><input type="checkbox" value="SERVICIO" /> Servicio</label>
+                    <label class="chk"><input type="checkbox" value="INDECISO" /> Indeciso</label>
+                  </div>
                 </div>
-              </li>
-              <li>
-                <span class="status-dot up"></span>
-                <div class="status-text">
-                  <p class="status-name">Sobrevive reinicios</p>
-                  <p class="status-detail">La cola vive en PostgreSQL: un reinicio no pierde trabajos pendientes ni duplica envíos.</p>
+
+                <div id="cp-list-box" class="cp-box hidden">
+                  <input type="search" id="cp-list-search" placeholder="Buscar contacto para agregar..." autocomplete="off" />
+                  <div id="cp-list" class="cp-list"><p class="empty-note">Cargando contactos...</p></div>
+                  <div class="cp-list-sum" id="cp-list-sum">0 seleccionados</div>
                 </div>
-              </li>
-            </ul>
-            <p class="muted" id="response-limits">Los límites se validan también en el servidor.</p>
-          </section>
-        </div>
 
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Estado del trabajo</span>
-            <select id="filter-response-jobs">
-              <option value="ALL">Todos</option>
-              <option value="PENDING">Pendientes</option>
-              <option value="PROCESSING">Procesando</option>
-              <option value="QUEUED">En cola de envío</option>
-              <option value="PAUSED">Pausados</option>
-              <option value="SENT">Enviados</option>
-              <option value="FAILED">Fallidos</option>
-              <option value="UNCERTAIN">Inciertos</option>
-              <option value="CANCELLED">Cancelados</option>
-            </select>
-          </label>
-          <button class="btn btn-ghost btn-sm" data-refresh="response-jobs">Actualizar trabajos</button>
-          <span class="muted" id="response-jobs-count">—</span>
-        </div>
+                <div class="cp-aud-sum" id="cp-aud-sum">Audiencia: —</div>
 
-        <div class="table-wrap card">
-          <table class="data-table" id="table-response-jobs">
-            <thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Programada</th><th>Intentos</th><th>Respuesta / error</th><th class="col-actions">Acciones</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
+                <div class="cp-send-row">
+                  <div class="wa-phone mini"><div class="wa-chat-bg"><div class="wa-bubble"><div class="wa-bubble-body" id="cp-preview">Escribe el mensaje para ver la vista previa...</div><div class="wa-bubble-meta"><span class="checks">✓✓</span><span>1:42</span></div></div></div></div>
+                  <button type="button" id="cp-send" class="btn btn-primary btn-lg">✈️ Lanzar campaña</button>
+                </div>
+              </div>
 
-        <section class="card">
-          <header class="card-head">
-            <h2>Historial de cambios</h2>
-            <span class="muted" id="response-history-count">–</span>
-          </header>
-          <div class="table-wrap">
-            <table class="data-table" id="table-response-history">
-              <thead><tr><th>Cuándo</th><th>Alcance</th><th>Acción</th><th>Usuario</th><th>Detalle</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <!-- ============ PROGRAMADOS ============ -->
-      <section id="tab-scheduled" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Mensajes programados</h2>
-            <p class="muted" id="scheduled-count">Cargando…</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="scheduled">Actualizar</button>
-        </div>
-
-        <section class="card">
-          <h3 class="card-title">Programar un mensaje</h3>
-          <form id="form-scheduled" class="form-grid">
-            <label class="field">
-              <span>Cliente *</span>
-              <select id="sched-customer" required>
-                <option value="">Selecciona un cliente…</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Teléfono *</span>
-              <input id="sched-phone" inputmode="tel" placeholder="51987654321" required />
-            </label>
-            <label class="field">
-              <span>Fecha y hora *</span>
-              <input id="sched-when" type="datetime-local" required />
-            </label>
-            <label class="field field-wide">
-              <span>Mensaje *</span>
-              <textarea id="sched-message" rows="2" maxlength="2000" placeholder="Escribe el mensaje…" required></textarea>
-            </label>
-            <div class="form-actions">
-              <button type="submit" class="btn btn-primary">Programar mensaje</button>
+              <!-- Lista de campanas -->
+              <div class="card camp-list">
+                <div class="section-head">
+                  <div>
+                    <h2>Campañas</h2>
+                    <p class="section-sub">El progreso se lee de la cola en tiempo real</p>
+                  </div>
+                  <button type="button" class="top-btn" id="cp-reload" title="Actualizar">⟳</button>
+                </div>
+                <div id="campaigns-list"><p class="empty-note">Cargando campañas...</p></div>
+              </div>
             </div>
-          </form>
-        </section>
+          </section>
 
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Estado</span>
-            <select id="filter-scheduled">
-              <option value="ALL">Todos</option>
-              <option value="SCHEDULED">Programados</option>
-              <option value="QUEUED">En cola</option>
-              <option value="SENT">Enviados</option>
-              <option value="FAILED">Fallidos</option>
-              <option value="CANCELLED">Cancelados</option>
-            </select>
-          </label>
-        </div>
+          <!-- ============ CHATBOT & REGLAS ============ -->
+          <section id="tab-bot" class="tab-panel hidden">
+            <div class="bot-grid">
+              <div class="card">
+                <div class="section-head tight">
+                  <div>
+                    <h2>🤖 Reglas de respuesta automática</h2>
+                    <p class="section-sub">Cuando el mensaje del cliente coincide, la regla responde ANTES que la IA</p>
+                  </div>
+                </div>
+                <div class="rule-form">
+                  <div class="grid-3">
+                    <div>
+                      <label class="field-label">Disparador</label>
+                      <select id="rule-type">
+                        <option value="CONTAINS">Cuando contenga la palabra</option>
+                        <option value="EXACT">Coincidencia exacta</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label">Palabra clave</label>
+                      <input type="text" id="rule-keyword" placeholder="ej. precio" maxlength="200" />
+                    </div>
+                    <div>
+                      <label class="field-label">Prioridad (menor = antes)</label>
+                      <input type="text" id="rule-priority" class="mono" value="100" inputmode="numeric" />
+                    </div>
+                  </div>
+                  <label class="field-label">Respuesta automática (usa {{nombre}})</label>
+                  <textarea id="rule-reply" rows="2" placeholder="Hola {{nombre}}, con gusto te paso la información..." maxlength="1024"></textarea>
+                  <button type="button" id="rule-add" class="btn btn-primary">＋ Crear regla</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table" id="table-rules">
+                    <thead><tr><th>Palabra clave</th><th>Disparador</th><th>Respuesta</th><th>Disparos</th><th>Activa</th><th></th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
 
-        <div class="table-wrap card">
-          <table class="data-table" id="table-scheduled">
-            <thead><tr><th>Cliente</th><th>Mensaje</th><th>Programado para</th><th>Estado</th><th class="col-actions">Acciones</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
+              <div class="bot-side">
+                <div class="card">
+                  <div class="section-head tight">
+                    <div>
+                      <h2>🧪 Probar reglas</h2>
+                      <p class="section-sub">Escribe un mensaje y mira qué respondería el bot (no se envía nada)</p>
+                    </div>
+                  </div>
+                  <input type="text" id="bot-test-input" placeholder="ej. Hola, cual es el precio?" maxlength="500" />
+                  <button type="button" id="bot-test-run" class="btn btn-secondary">Probar respuesta</button>
+                  <div id="bot-test-result" class="bot-test-result hidden"></div>
+                </div>
 
-      <!-- ============ MENSAJES ============ -->
-      <section id="tab-messages" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Mensajes recientes</h2>
-            <p class="muted" id="messages-count">Cargando…</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="messages">Actualizar</button>
-        </div>
+                <div class="card">
+                  <div class="section-head tight">
+                    <div>
+                      <h2>⚡ Control de automatización</h2>
+                      <p class="section-sub">Estado actual: <strong id="automation-status" class="mono">-</strong></p>
+                    </div>
+                  </div>
+                  <div class="btn-row">
+                    <button class="btn btn-primary" data-automation="activate">Activar</button>
+                    <button class="btn btn-secondary" data-automation="pause">Pausar</button>
+                    <button class="btn btn-danger" data-automation="stop">Detener</button>
+                    <button class="btn btn-primary" data-automation="resume">Reanudar</button>
+                  </div>
+                  <div class="telemetry-grid">
+                    <div><span class="tel-label">Cola</span><span class="tel-value mono">Worker por cron</span></div>
+                    <div><span class="tel-label">Webhooks</span><span class="tel-value mono">/api/webhooks</span></div>
+                    <div><span class="tel-label">Anti-ban</span><span class="tel-value mono ok">Intervalos</span></div>
+                    <div><span class="tel-label">Zona horaria</span><span class="tel-value mono">America/Lima</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
 
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Dirección</span>
-            <select id="filter-messages">
-              <option value="ALL">Todos</option>
-              <option value="INBOUND">Recibidos</option>
-              <option value="OUTBOUND">Enviados</option>
-            </select>
-          </label>
-          <label class="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input id="search-messages" placeholder="Buscar en el contenido…" autocomplete="off" />
-          </label>
-        </div>
+          <!-- ============ CONTACTOS ============ -->
+          <section id="tab-customers" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Contactos &amp; Listas</h2>
+                  <p class="section-sub">Directorio real de tu base de datos para campañas y envíos</p>
+                </div>
+                <div class="btn-row">
+                  <button type="button" id="btn-cust-csv" class="btn btn-secondary">⬆️ Importar CSV</button>
+                  <button type="button" id="btn-cust-new" class="btn btn-primary">＋ Nuevo contacto</button>
+                </div>
+              </div>
+              <!-- Embudo de ventas (estilo Kanban): clientes por etapa -->
+              <div class="funnel-board" id="funnel-board"><p class="empty-note">Cargando embudo...</p></div>
+              <div class="list-toolbar">
+                <input type="search" id="cust-search" placeholder="Buscar por nombre o teléfono..." autocomplete="off" />
+                <select id="cust-filter-status">
+                  <option value="ALL">Todos los estados</option>
+                  <option value="ACTIVE">Activos</option>
+                  <option value="BLOCKED">Bloqueados</option>
+                  <option value="ARCHIVED">Archivados</option>
+                </select>
+                <select id="cust-filter-interest">
+                  <option value="ALL">Todo interés</option>
+                  <option value="PRODUCTO">Producto</option>
+                  <option value="SERVICIO">Servicio</option>
+                  <option value="INDECISO">Indeciso</option>
+                </select>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-customers">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Nombre</th><th>Estado</th><th>Interes</th><th>Ultimo mensaje</th><th>Etapa</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-        <div class="table-wrap card">
-          <table class="data-table" id="table-messages">
-            <thead><tr><th>Fecha</th><th>Dirección</th><th>Cliente</th><th>Tipo</th><th>Contenido</th><th>Estado</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
+          <!-- ============ CATALOGO ============ -->
+          <section id="tab-products" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>🛒 Catálogo de Productos</h2>
+                  <p class="section-sub">La IA lee esta lista para responder precios y stock a tus clientes en WhatsApp</p>
+                </div>
+                <div class="btn-row">
+                  <button type="button" id="btn-prod-reload" class="top-btn" title="Actualizar">⟳</button>
+                  <button type="button" id="btn-prod-new" class="btn btn-primary">＋ Nuevo producto</button>
+                </div>
+              </div>
+              <div class="list-toolbar">
+                <input type="search" id="prod-search" placeholder="Buscar producto..." autocomplete="off" />
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-products">
+                  <thead><tr><th>Producto</th><th>Precio</th><th>Stock</th><th>Descripción</th><th>Estado</th><th>Acciones</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-      <!-- ============ LOGS ============ -->
-      <section id="tab-logs" class="tab-panel hidden" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Errores y logs</h2>
-            <p class="muted" id="logs-count">Cargando…</p>
-          </div>
-          <button class="btn btn-ghost btn-sm" data-refresh="logs">Actualizar</button>
-        </div>
+          <!-- ============ BANDEJA EN VIVO ============ -->
+          <section id="tab-chat" class="tab-panel hidden">
+            <div class="chat-toolbar">
+              <input type="search" id="chat-search" placeholder="Buscar conversacion..." autocomplete="off" />
+              <span class="chat-conn" id="chat-conn" title="Estado de WhatsApp">● conectando...</span>
+            </div>
+            <div class="chat-layout">
+              <aside class="chat-list" id="chat-list"></aside>
+              <div class="chat-main">
+                <div class="chat-header">
+                  <div class="chat-header-info">
+                    <div id="chat-header">Selecciona una conversacion</div>
+                    <div class="chat-sub" id="chat-sub"></div>
+                  </div>
+                  <div class="btn-row chat-header-actions">
+                    <select id="chat-stage" class="chat-mode" title="Etapa de embudo del cliente">
+                    <option value="NUEVO">🆕 Nuevo</option>
+                    <option value="NEGOCIANDO">🤝 Negociando</option>
+                    <option value="CERRADO">🏆 Cerrado</option>
+                  </select>
+                  <select id="chat-mode" class="chat-mode" title="Modo de atencion de esta conversacion">
+                      <option value="OPEN">🤖 Automatico</option>
+                      <option value="HUMAN">🙋 Humano</option>
+                      <option value="CLOSED">✔️ Cerrada</option>
+                    </select>
+                    <button id="btn-pin" class="btn btn-secondary" title="Anclar arriba en la bandeja">📌</button>
+                <button id="btn-suggest" class="btn btn-secondary" title="La IA propone una respuesta (no se envia)">✨ Sugerir</button>
+                    <button id="btn-summary" class="btn btn-secondary" title="La IA resume la conversacion">📄 Resumen</button>
+                  </div>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                  <p class="chat-empty">Elige una conversacion de la lista.</p>
+                </div>
+                <div class="chat-ai" id="chat-ai" hidden></div>
+                <div class="quick-replies" id="quick-replies" hidden></div>
+                <form class="chat-inputbar" id="chat-form">
+                  <input type="text" id="chat-input" placeholder="Escribe como operador y presiona Enter..." autocomplete="off" maxlength="4096" />
+                  <button type="submit" class="btn btn-primary">Enviar</button>
+                </form>
+              </div>
+              <aside class="chat-context" id="chat-context">
+                <div id="chat-crm-card" class="crm-card"><p class="chat-empty">Elige una conversacion.</p></div>
+                <h3>Panel del asistente</h3>
+                <div id="chat-context-body"><p class="chat-empty">Elige una conversacion.</p></div>
+              </aside>
+            </div>
+          </section>
 
-        <div class="toolbar">
-          <label class="field field-inline">
-            <span>Nivel</span>
-            <select id="filter-logs">
-              <option value="ALL">Todos</option>
-              <option value="INFO">Info</option>
-              <option value="WARN">Aviso</option>
-              <option value="ERROR">Error</option>
-            </select>
-          </label>
-          <label class="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input id="search-logs" placeholder="Buscar evento o mensaje…" autocomplete="off" />
-          </label>
-        </div>
+          <!-- ============ CONVERSACIONES ============ -->
+          <section id="tab-conversations" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Registro de Conversaciones</h2>
+                  <p class="section-sub">Historial de chats y su estado de atención</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-conversations">
+                  <thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Ultimo mensaje</th><th>Accion</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-        <div class="table-wrap card">
-          <table class="data-table" id="table-logs">
-            <thead><tr><th>Fecha</th><th>Nivel</th><th>Evento</th><th>Mensaje</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-  </div>
+          <!-- ============ CONEXION WHATSAPP ============ -->
+          <section id="tab-qr" class="tab-panel hidden">
+            <section class="card">
+              <div class="section-head tight">
+                <div>
+                  <h2>🔗 Conexión WhatsApp</h2>
+                  <p class="section-sub">Vincula tu dispositivo escaneando el QR o con código de emparejamiento</p>
+                </div>
+              </div>
+              <p class="note">Los mensajes entrantes y salientes se sincronizan en tiempo real. El estado de la sesión también se ve en la barra lateral.</p>
+              <div class="btn-row">
+                <button id="btn-qr" class="btn btn-primary">Generar código QR</button>
+                <button id="btn-disconnect" class="btn btn-secondary" hidden>Desconectar</button>
+              </div>
+              <div id="qr-container"></div>
+            </section>
+          </section>
 
-  <!-- ================= MODAL: CONVERSACIÓN ================= -->
-  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-card">
-      <header class="modal-head">
-        <div>
-          <h2 id="modal-title">Conversación</h2>
-          <p class="muted" id="modal-subtitle">—</p>
-        </div>
-        <button class="btn btn-ghost btn-icon" data-close-modal aria-label="Cerrar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
-      </header>
-      <div class="modal-actions" id="modal-actions"></div>
-      <div class="chat" id="chat-messages"></div>
-    </div>
-  </div>
+          <!-- ============ COLA ============ -->
+          <section id="tab-queue" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Cola de Mensajes de Salida</h2>
+                  <p class="section-sub">La cola se despacha automáticamente con el cron (respeta horarios y límites)</p>
+                </div>
+                <div class="btn-row">
+                  <button class="btn btn-primary" data-queue="resume">Reanudar cola</button>
+                  <button class="btn btn-secondary" data-queue="pause">Pausar cola</button>
+                  <button class="btn btn-danger" data-queue="stop">Detener cola</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-queue">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Estado</th><th>Intentos</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-  <!-- ================= MODAL: TIEMPO DE RESPUESTA DEL CLIENTE ================= -->
-  <div id="customer-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="customer-modal-title">
-    <div class="modal-backdrop" data-close-customer-modal></div>
-    <div class="modal-card">
-      <header class="modal-head">
-        <div>
-          <h2 id="customer-modal-title">Tiempo de respuesta</h2>
-          <p class="muted" id="customer-modal-subtitle">—</p>
-        </div>
-        <button class="btn btn-ghost btn-icon" data-close-customer-modal aria-label="Cerrar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
-      </header>
+          <!-- ============ PROGRAMADOS ============ -->
+          <section id="tab-scheduled" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Mensajes Programados</h2>
+                  <p class="section-sub">Se mueven a la cola cuando llega su hora (cron cada minuto)</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-scheduled">
+                  <thead><tr><th>ID</th><th>Telefono</th><th>Mensaje</th><th>Programado para</th><th>Estado</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-      <div class="customer-modal-body">
-        <p class="muted" id="customer-response-source">—</p>
+          <section id="tab-reservations" class="tab-panel hidden">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Reservas y Citas</h2>
+                  <p class="section-sub">Confirmadas por el bot dentro del horario 09:00 a. m. – 08:00 p. m.</p>
+                </div>
+                <button type="button" class="btn btn-secondary" id="btn-res-reload">⟳ Recargar</button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table" id="table-reservations">
+                  <thead><tr><th>N°</th><th>Cliente</th><th>Telefono</th><th>Fecha y hora</th><th>Estado</th><th></th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-        <form id="form-customer-response" class="form-grid" novalidate>
-          <label class="check-field field-wide">
-            <input type="checkbox" id="cres-enabled" />
-            <span>Responder automáticamente a este cliente</span>
-          </label>
-          <label class="field">
-            <span>Espera mínima (s)</span>
-            <input id="cres-min" type="number" min="0" max="600" step="1" required />
-          </label>
-          <label class="field">
-            <span>Espera máxima (s)</span>
-            <input id="cres-max" type="number" min="0" max="900" step="1" required />
-          </label>
-          <label class="field">
-            <span>Prioridad (0 a 10)</span>
-            <input id="cres-priority" type="number" min="0" max="10" step="1" required />
-          </label>
-          <label class="check-field">
-            <input type="checkbox" id="cres-random" />
-            <span>Variación aleatoria</span>
-          </label>
-          <label class="check-field">
-            <input type="checkbox" id="cres-paused" />
-            <span>Pausar solo este cliente</span>
-          </label>
+          <!-- ============ REGISTROS ============ -->
+          <section id="tab-logs" class="tab-panel hidden">            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Registros del Sistema</h2>
+                  <p class="section-sub">Eventos, envíos y errores en tiempo real</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table mono-table" id="table-logs">
+                  <thead><tr><th>Fecha</th><th>Nivel</th><th>Evento</th><th>Mensaje</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </main>
 
-          <div class="form-actions field-wide">
-            <button type="submit" class="btn btn-primary" id="btn-save-customer-response">Guardar</button>
-            <button type="button" class="btn btn-ghost" data-cust-response="reset">Usar valores globales</button>
-          </div>
-        </form>
-
-        <section class="human-box">
-          <header class="card-head">
-            <h3 class="card-title">Atención humana</h3>
-            <span class="pill" id="customer-human-pill">–</span>
-          </header>
-          <p class="muted" id="customer-human-status">—</p>
-          <div class="btn-row">
-            <button type="button" class="btn btn-ghost btn-sm" data-cust-response="takeover">Tomar control</button>
-            <button type="button" class="btn btn-primary btn-sm" data-cust-response="release">Reactivar bot</button>
-          </div>
-        </section>
+        <footer class="app-footer">WhatsApp Pro Suite · Evolution API + Supabase + Gemini</footer>
       </div>
     </div>
   </div>
 
-  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <!-- ==================== MODAL CONTACTO / CSV ==================== -->
+  <div id="modal-contact" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>＋ Nuevo contacto</h3>
+        <button type="button" class="modal-x" data-close="modal-contact">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Teléfono con código país *</label>
+        <input type="text" id="contact-phone" class="mono" placeholder="51984123456" />
+        <label class="field-label">Nombre</label>
+        <input type="text" id="contact-name" placeholder="ej. Carlos Mendoza" maxlength="80" />
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-contact">Cancelar</button>
+        <button type="button" id="contact-save" class="btn btn-primary">Guardar contacto</button>
+      </div>
+    </div>
+  </div>
 
-  <script src="js/app.js?v=5"></script>
+  <div id="modal-csv" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>⬆️ Importar contactos desde CSV</h3>
+        <button type="button" class="modal-x" data-close="modal-csv">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="note">Formato: columnas <strong class="mono">phone</strong> y <strong class="mono">name</strong> (nombre opcional). Ejemplo:<br /><span class="mono">phone,name<br />51984123456,Carlos Mendoza<br />51987654321,María López</span></p>
+        <input type="file" id="csv-file" accept=".csv,text/csv" />
+        <div id="csv-progress" class="csv-progress hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-csv">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-product" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3 id="prod-modal-title">＋ Nuevo producto</h3>
+        <button type="button" class="modal-x" data-close="modal-product">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Nombre del producto *</label>
+        <input type="text" id="prod-name" maxlength="150" placeholder="ej. Polo bordado azul talla M" />
+        <div class="grid-3">
+          <div>
+            <label class="field-label">Precio</label>
+            <input type="text" id="prod-price" class="mono" maxlength="50" placeholder="S/ 45.90" />
+          </div>
+          <div>
+            <label class="field-label">Stock</label>
+            <input type="text" id="prod-stock" maxlength="50" placeholder="12 unidades" />
+          </div>
+          <div>
+            <label class="field-label">Estado</label>
+            <label class="crm-check" style="margin-top:6px"><input type="checkbox" id="prod-active" checked /> Activo</label>
+          </div>
+        </div>
+        <label class="field-label">Descripción (la IA la usa para vender)</label>
+        <textarea id="prod-desc" rows="3" maxlength="2000" placeholder="Detalles: materiales, tallas, colores, para quién es..."></textarea>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-product">Cancelar</button>
+        <button type="button" id="prod-save" class="btn btn-primary">Guardar producto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notificacion toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ==================== NOVA (asistente flotante) ==================== -->
+  <div id="ai-widget">
+    <div id="ai-chat" class="ai-chat hidden" role="dialog" aria-label="Asistente virtual">
+      <div class="ai-chat-header">
+        <div class="ai-chat-avatar">🤖</div>
+        <div class="ai-chat-title">
+          <strong>Nova</strong>
+          <span id="ai-chat-status">Asistente del panel</span>
+        </div>
+        <div class="ai-chat-actions">
+          <button type="button" id="ai-min" title="Minimizar">—</button>
+          <button type="button" id="ai-close" title="Cerrar">✕</button>
+        </div>
+      </div>
+      <div class="ai-chat-msgs" id="ai-msgs"></div>
+      <div class="ai-typing hidden" id="ai-typing">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <em>Nova esta pensando...</em>
+      </div>
+      <div class="ai-confirm hidden" id="ai-confirm"></div>
+      <form class="ai-chat-input" id="ai-form">
+        <label class="ai-attach" title="Adjuntar imagen o audio (hasta 15 MB)">📎
+          <input type="file" id="ai-file" accept="image/*,audio/*" hidden />
+        </label>
+        <input type="text" id="ai-input" placeholder="Pideme lo que necesites..." autocomplete="off" maxlength="6000" />
+        <button type="submit" id="ai-send" class="ai-send" title="Enviar">➤</button>
+      </form>
+    </div>
+    <button type="button" id="ai-fab" class="ai-fab" aria-label="Abrir asistente" title="Nova, tu asistente">
+      <span class="ai-fab-bot">🤖</span>
+      <span class="ai-fab-ring"></span>
+      <span class="ai-fab-dot hidden" id="ai-fab-dot"></span>
+    </button>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/assistant.js"></script>
+  <script src="js/pro.js"></script>
 </body>
 </html>
+
+

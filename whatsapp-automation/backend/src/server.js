@@ -9,7 +9,6 @@ const app = require('./app');
 const logger = require('./utils/logger');
 const database = require('./config/database');
 const scheduler = require('./services/scheduler.service');
-const responseProcessing = require('./services/responseProcessing.service');
 const authService = require('./services/auth.service');
 
 async function start() {
@@ -32,13 +31,7 @@ async function start() {
   });
 
   scheduler.start();
-  // En local no hay cron externo: el procesador persistente revisa la cola de
-  // respuestas cada pocos segundos y dispara el worker de envio.
-  responseProcessing.start();
 }
-
-process.on('SIGTERM', () => responseProcessing.stop());
-process.on('SIGINT', () => responseProcessing.stop());
 
 start().catch((err) => {
   logger.error({ err }, 'Fallo critico al iniciar el backend');

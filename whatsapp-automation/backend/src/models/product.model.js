@@ -80,4 +80,41 @@ async function list() {
   return rows;
 }
 
-module.exports = { ensureReady, search, list };
+// ---- CRUD del catalogo desde el panel (pestaña Catálogo) ----
+async function getById(id) {
+  await ensureReady();
+  const { rows } = await pool.query('SELECT * FROM products WHERE id = $1 LIMIT 1', [id]);
+  return rows[0] || null;
+}
+
+async function create({ name, price = null, description = null, stock = null, active = true }) {
+  await ensureReady();
+  const { rows } = await pool.query(
+    `INSERT INTO products (name, price, description, stock, active)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [String(name).trim().slice(0, 150), price, description, stock, active === true]
+  );
+  return rows[0];
+}
+
+async function update(id, fields) {
+  await ensureReady();
+  const allowed = ['name', 'price', 'description', 'stock', 'active'];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (!keys.length) return getById(id);
+  const setClause = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+  const values = keys.map((k) => fields[k]);
+  const { rows } = await pool.query(
+    `UPDATE products SET ${setClause}, updated_at = NOW() WHERE id = $${keys.length + 1} RETURNING *`,
+    [...values, id]
+  );
+  return rows[0] || null;
+}
+
+async function remove(id) {
+  await ensureReady();
+  const { rowCount } = await pool.query('DELETE FROM products WHERE id = $1', [id]);
+  return rowCount > 0;
+}
+
+module.exports = { ensureReady, search, list, getById, create, update, remove };

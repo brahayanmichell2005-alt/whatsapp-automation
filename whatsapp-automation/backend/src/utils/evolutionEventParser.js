@@ -58,6 +58,12 @@ function parseMessageUpsert(payload) {
   if (!entry) return null;
 
   const primaryJid = entry.key?.remoteJid;
+  // Mensajes enviados por el propio telefono del dueno (fromMe) se ignoran
+  // por completo: el bot no los registra ni responde. Asi el dueno puede
+  // escribirse a si mismo (o el celular reenvia ecos de salidas) sin que la
+  // IA conteste ni aparezcan chats fantasma en el panel. Los envios que hace
+  // el bot por la API los registra el worker de envio, no este webhook.
+  if (entry.key?.fromMe) return null;
   const isPhoneJid = (jid) =>
     typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us'));
   const isLidJid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');

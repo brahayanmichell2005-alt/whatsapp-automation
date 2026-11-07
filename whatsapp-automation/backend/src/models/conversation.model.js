@@ -38,17 +38,27 @@ async function touchLastMessage(id) {
   await pool.query('UPDATE conversations SET last_message_at = NOW() WHERE id = $1', [id]);
 }
 
-async function updateStatus(id, status, { assignedTo = undefined } = {}) {
-  const sets = ['status = $1'];
-  const params = [status];
+async function updateStatus(id, status, { assignedTo = undefined, pinned = undefined } = {}) {
+  const sets = [];
+  const params = [];
+
+  if (status !== undefined) {
+    sets.push(`status = $${params.length + 1}`);
+    params.push(status);
+  }
 
   if (assignedTo !== undefined) {
     params.push(assignedTo);
     sets.push(`assigned_to = $${params.length}`);
   }
+  if (pinned !== undefined) {
+    params.push(pinned === true);
+    sets.push(`pinned = $${params.length}`);
+  }
   if (status === 'CLOSED') {
     sets.push('closed_at = NOW()');
   }
+  if (!sets.length) return findById(id);
 
   params.push(id);
   const { rows } = await pool.query(
@@ -58,52 +68,21 @@ async function updateStatus(id, status, { assignedTo = undefined } = {}) {
   return rows[0] || null;
 }
 
-// Atencion humana: el trabajador toma el control. El bot queda desactivado
-// para esa conversacion hasta que se reactive manualmente.
-async function takeOver(id, { userId = null, reason = null } = {}) {
-  const { rows } = await pool.query(
-    `UPDATE conversations
-     SET status = 'HUMAN',
-         bot_enabled = FALSE,
-         human_taken_over_at = NOW(),
-         human_taken_over_by = $2,
-         human_takeover_reason = $3
-     WHERE id = $1
-     RETURNING *`,
-    [id, userId, reason]
-  );
-  return rows[0] || null;
-}
-
-// Reactivacion manual del bot: vuelve a OPEN y limpia la marca humana.
-async function releaseBot(id) {
-  const { rows } = await pool.query(
-    `UPDATE conversations
-     SET status = 'OPEN',
-         bot_enabled = TRUE,
-         human_taken_over_at = NULL,
-         human_taken_over_by = NULL,
-         human_takeover_reason = NULL,
-         closed_at = NULL
-     WHERE id = $1
-     RETURNING *`,
-    [id]
-  );
-  return rows[0] || null;
-}
-
 // NULLS LAST: en MySQL las conversaciones sin mensajes quedaban al final del
 // orden descendente; en PostgreSQL quedarian primero si no se indica.
 // Lista para la vista de chat en vivo: incluye el nombre/telefono del
-// cliente y una vista previa del ultimo mensaje de cada conversacion.
+// cliente, su etapa de embudo, notas, pausa de IA y una vista previa del
+// ultimo mensaje. Las ancladas (pinned) quedan SIEMPRE primeras.
 async function listForChat({ limit = 50, offset = 0 } = {}) {
   const { rows } = await pool.query(
     `SELECT conv.*, c.name AS customer_name, c.phone AS customer_phone,
+            c.funnel_stage AS customer_funnel_stage, c.notes AS customer_notes,
+            c.ai_paused AS customer_ai_paused,
             (SELECT content FROM messages WHERE conversation_id = conv.id
               ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message_preview
      FROM conversations conv
      LEFT JOIN customers c ON c.id = conv.customer_id
-     ORDER BY conv.last_message_at DESC NULLS LAST, conv.id DESC
+     ORDER BY conv.pinned DESC, conv.last_message_at DESC NULLS LAST, conv.id DESC
      LIMIT $1 OFFSET $2`,
     [limit, offset]
   );
@@ -136,8 +115,6 @@ module.exports = {
   findOrCreateOpenByCustomer,
   touchLastMessage,
   updateStatus,
-  takeOver,
-  releaseBot,
   list,
   listForChat,
 };

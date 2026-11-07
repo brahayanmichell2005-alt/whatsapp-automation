@@ -19,6 +19,28 @@ const HKDF_INFO = {
   DOCUMENT: 'WhatsApp Document Keys',
 };
 
+// Evolution API v2 a veces serializa la mediaKey como objeto de bytes
+// ({"0":40,"1":186,...}) en vez de base64: aqui se reconstruye. Si ya es
+// base64 (string), queda igual. Esto es lo que rompia el descifrado de los
+// stickers/fotos reales.
+function normalizeMediaKey(mediaKey) {
+  if (!mediaKey) return null;
+  if (Buffer.isBuffer(mediaKey)) return mediaKey.toString('base64');
+  if (typeof mediaKey === 'object') {
+    const keys = Object.keys(mediaKey);
+    if (!keys.length) return null;
+    const values = keys
+      .map((k) => ({ i: Number(k), v: Number(mediaKey[k]) }))
+      .sort((a, b) => a.i - b.i)
+      .map((x) => x.v);
+    if (values.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+      return Buffer.from(values).toString('base64');
+    }
+    return null;
+  }
+  return String(mediaKey);
+}
+
 // Extrae la informacion de media de un mensaje crudo de Baileys/Evolution.
 // Devuelve null si el mensaje no trae archivo descargable.
 function extractMedia(rawMessage) {
@@ -33,7 +55,7 @@ function extractMedia(rawMessage) {
   for (const [kind, m] of candidatos) {
     if (!m) continue;
     const url = m.url || null;
-    const mediaKey = m.mediakey || m.mediaKey || null;
+    const mediaKey = normalizeMediaKey(m.mediakey || m.mediaKey || null);
     if (!url || !mediaKey) return null;
     return {
       kind,
@@ -67,7 +89,11 @@ function hkdfExpand(mediaKey, info, length) {
 // Descarga y descifra el archivo. Devuelve { buffer, mimetype } o null.
 async function decryptMedia({ kind, url, mediaKey }) {
   try {
-    const key = Buffer.from(mediaKey, 'base64');
+    const key = Buffer.from(normalizeMediaKey(mediaKey) || '', 'base64');
+    if (key.length !== 32) {
+      logger.warn({ kind, keyBytes: key.length }, 'La mediaKey no tiene 32 bytes: no se puede descifrar');
+      return null;
+    }
     const info = HKDF_INFO[kind] || 'WhatsApp Image Keys';
     const okm = hkdfExpand(key, Buffer.from(info), 112);
     const iv = okm.slice(0, 16);

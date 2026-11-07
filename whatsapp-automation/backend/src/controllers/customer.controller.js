@@ -53,7 +53,35 @@ async function update(req, res, next) {
     const existing = await customerModel.findById(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    const updated = await customerModel.update(req.params.id, req.body);
+    // Suite de ventas: etapa de embudo, notas y pausa de IA por cliente.
+    const FUNNEL_STAGES = ['NUEVO', 'NEGOCIANDO', 'CERRADO'];
+    const body = { ...req.body };
+    if (body.funnel_stage !== undefined) {
+      if (!FUNNEL_STAGES.includes(body.funnel_stage)) {
+        return res.status(400).json({ error: `funnel_stage debe ser uno de: ${FUNNEL_STAGES.join(', ')}` });
+      }
+    }
+    if (body.notes !== undefined) {
+      if (body.notes !== null && typeof body.notes !== 'string') {
+        return res.status(400).json({ error: 'notes debe ser texto' });
+      }
+      body.notes = body.notes === null ? null : String(body.notes).slice(0, 4000);
+    }
+    if (body.ai_paused !== undefined) {
+      body.ai_paused = body.ai_paused === true || body.ai_paused === 'true';
+    }
+    // Solo se pasan las claves de la suite que vinieron en el body; el resto
+    // lo valida el validator de siempre.
+    const suiteKeys = ['funnel_stage', 'notes', 'ai_paused'].filter((k) => body[k] !== undefined);
+    const payload = {};
+    for (const k of suiteKeys) payload[k] = body[k];
+    if (req.body.name !== undefined) payload.name = req.body.name;
+    if (req.body.email !== undefined) payload.email = req.body.email;
+    if (req.body.status !== undefined) payload.status = req.body.status;
+    if (req.body.interest_type !== undefined) payload.interest_type = req.body.interest_type;
+    if (req.body.interest_level !== undefined) payload.interest_level = req.body.interest_level;
+
+    const updated = await customerModel.update(req.params.id, payload);
     res.json(updated);
   } catch (err) {
     next(err);
