@@ -31,7 +31,6 @@ const campaignRoutes = require('./routes/campaign.routes');
 const botRuleRoutes = require('./routes/botRule.routes');
 const followUpRoutes = require('./routes/followUp.routes');
 const productRoutes = require('./routes/product.routes');
-const reservationRoutes = require('./routes/reservation.routes');
 
 const app = express();
 
@@ -67,7 +66,6 @@ app.use(express.static(path.join(__dirname, '../../public')));
 
 // Rutas
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/reservations', reservationRoutes);
 app.use('/api/instance', instanceRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/customers', customerRoutes);

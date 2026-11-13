@@ -197,7 +197,7 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   if (optCommand === 'OPT_OUT') {
     await prefsModel.optOut(customer.id);
     await queueModel.cancelPendingByCustomer(customer.id);
-    // Cualquier flujo abierto (nombre/reserva) se cierra con la baja.
+    // Cualquier flujo abierto (nombre) se cierra con la baja.
     await stateModel.clear(customer.id).catch(() => {});
     await logModel.record({
       eventType: 'opt_out',
@@ -315,8 +315,6 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   // 1) Nombre y apellidos: si el cliente esta respondiendo el pedido de
   //    nombre, se procesa aqui. Al terminar se continua con la consulta
   //    original (preface solo saluda; content = texto pendiente).
-  // 2) Reservas/citas: flujo deterministico que pregunta fecha y hora
-  //    dentro del horario 09:00-20:00 y confirma con el cliente.
   const flowTurn = await botFlowService.handleAwaiting({ customer, conversation, text });
   if (flowTurn) {
     if (flowTurn.intercepted) return;
@@ -336,15 +334,6 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   if (!customerModel.isUsableName(customer.name) && !nameDeclined) {
     await botFlowService.startNameCapture({ customer, conversation, pendingText: text });
     return;
-  }
-
-  // Solicitud de reserva o cita: se atiende con el flujo de fecha/hora.
-  if (
-    customerModel.isUsableName(customer.name) &&
-    botFlowService.detectReservationIntent(text)
-  ) {
-    const started = await botFlowService.startReservation({ customer, conversation });
-    if (started) return;
   }
 
   const classification = { ...rulesService.classify(content), source: 'RULES' };

@@ -364,7 +364,7 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 700; lett
 .top-btn.spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.views { flex: 1; padding: 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+.views { flex: 1; padding: 24px; max-width: 1680px; width: 100%; margin: 0 auto; }
 .tab-panel { display: flex; flex-direction: column; gap: 20px; }
 
 .app-footer {
@@ -716,10 +716,11 @@ select option { background: var(--surface); color: var(--text); }
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-  height: 560px;
+  height: calc(100vh - 205px);
+  min-height: 560px;
   box-shadow: var(--shadow);
 }
-@media (min-width: 900px) { .chat-layout { grid-template-columns: 280px 1fr 260px; grid-template-rows: minmax(0, 1fr); } }
+@media (min-width: 900px) { .chat-layout { grid-template-columns: 320px 1fr 300px; grid-template-rows: minmax(0, 1fr); } }
 
 .chat-list { border-bottom: 1px solid var(--border); overflow-y: auto; }
 @media (min-width: 900px) { .chat-list { border-bottom: none; border-right: 1px solid var(--border); } }
@@ -1530,3 +1531,11 @@ html.dark .views .wa-bubble { background: #ffffff !important; border: 1px solid 
 .qr-chip:hover { border-color: var(--emerald); color: var(--emerald); }
 
 .chat-item-pin { margin-right: 4px; font-size: 0.75rem; }
+
+/* Bandeja en vivo a pantalla completa: fondo tipo WhatsApp claro dentro de
+   la zona central (aunque el marco del panel este en tema oscuro) y texto
+   un poco mas grande para leer las conversaciones con comodidad. */
+.views .chat-messages { background: #efeae2; }
+.views .bubble { font-size: 0.84rem; }
+.views .chat-item-name { font-size: 0.82rem; }
+.views .chat-item-preview { font-size: 0.74rem; }

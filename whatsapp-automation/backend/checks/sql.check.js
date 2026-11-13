@@ -71,11 +71,16 @@ const CASES = {
     findById: [[1]],
     create: [[{ phone: '51999000111', name: 'Ana', email: 'a@a.com' }]],
     findOrCreateByPhone: [['51999000111', 'Ana']],
+    setName: [[1, 'Ana']],
     updateClassification: [[1, { interestType: 'PRODUCTO', interestLevel: 'ALTO' }]],
     touchLastMessage: [[1]],
     list: [[{ limit: 10, offset: 0 }], [undefined]],
+    listByIds: [[[1, 2]]],
     update: [[1, { name: 'Ana', status: 'BLOCKED', interest_type: 'SERVICIO', evil: 'x' }], [1, {}]],
     remove: [[1]],
+    ensureAiProfile: [[]],
+    updateAiProfile: [[1, 'Perfil de prueba']],
+    getAiProfile: [[1]],
   },
   'models/conversation.model.js': {
     findById: [[1]],
@@ -85,14 +90,20 @@ const CASES = {
     touchLastMessage: [[1]],
     updateStatus: [[1, 'CLOSED'], [1, 'HUMAN', { assignedTo: 3 }], [1, 'OPEN', { assignedTo: null }]],
     list: [[{ status: 'OPEN', limit: 5, offset: 0 }], [{ limit: 5, offset: 0 }]],
+    listForChat: [[{ limit: 5, offset: 0 }], [undefined]],
   },
   'models/message.model.js': {
     findById: [[1]],
+    getMediaData: [[1]],
+    cacheMediaData: [[1, Buffer.from('x'), 'image/jpeg']],
     findByExternalId: [['ABC']],
     create: [[{ conversationId: 1, customerId: 1, direction: 'INBOUND', content: 'hola', externalMessageId: 'X' }]],
     updateStatus: [[1, 'SENT'], [1, 'READ']],
+    remove: [[1]],
     listByConversation: [[1, { limit: 10, offset: 0 }]],
+    listSince: [[1, 5, { limit: 10 }]],
     listRecentByConversation: [[1, 20]],
+    countByConversation: [[1]],
     list: [[{ limit: 10, offset: 0 }]],
   },
   'models/messageQueue.model.js': {
@@ -176,10 +187,23 @@ describe('SQL de los modelos (PostgreSQL)', () => {
   }
 
   test('todas las funciones exportadas por los modelos estan cubiertas', () => {
+    // isUsableName es una funcion pura (no ejecuta SQL), por eso no tiene
+    // sentido dentro de CASES: se prueba aparte mas abajo.
+    const PURE = new Set(['models/customer.model.js:isUsableName']);
     for (const [file, fns] of Object.entries(CASES)) {
-      const exported = Object.keys(load(file)).sort();
+      const exported = Object.keys(load(file))
+        .filter((fn) => !PURE.has(`${file}:${fn}`))
+        .sort();
       assert.deepEqual(Object.keys(fns).sort(), exported, `funciones sin caso de prueba en ${file}`);
     }
+  });
+
+  test('customer.model.isUsableName descarta nombres vacios o de relleno', () => {
+    const model = load('models/customer.model.js');
+    assert.equal(model.isUsableName('Ana'), true);
+    assert.equal(model.isUsableName('123'), false);
+    assert.equal(model.isUsableName('.'), false);
+    assert.equal(model.isUsableName(''), false);
   });
 });
 
@@ -203,7 +227,7 @@ describe('Comportamiento de los modelos', () => {
   });
 
   test('findOrCreateByPhone: existente -> no inserta', async () => {
-    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519' }], rowCount: 1 });
+    fakePg.handler = async () => ({ rows: [{ id: 7, phone: '519', name: 'Ana' }], rowCount: 1 });
     const row = await load('models/customer.model.js').findOrCreateByPhone('519', 'Ana');
     assert.equal(row.id, 7);
     assert.equal(fakePg.calls.length, 1);

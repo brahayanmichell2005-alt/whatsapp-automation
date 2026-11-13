@@ -470,65 +470,6 @@ async function loadScheduled() {
 }
 
 // ---------------------------------------------------------------------
-// Reservas y citas (confirmadas por el bot)
-// ---------------------------------------------------------------------
-const reservationsState = { items: [], canceling: new Set() };
-
-async function loadReservations() {
-  const tbody = document.querySelector('#table-reservations tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="6">Cargando...</td></tr>';
-  try {
-    const items = await apiFetch('/api/reservations?limit=100');
-    reservationsState.items = items;
-    tbody.innerHTML =
-      items
-        .map((r) => {
-          const when = r.date_text && r.time_text ? `${r.date_text} · ${r.time_text}` : fmtDate(r.start_at);
-          const badge =
-            r.status === 'CONFIRMED'
-              ? '<span class="badge-inline" style="background:#10b981">Confirmada</span>'
-              : '<span class="badge-inline" style="background:#64748b">Cancelada</span>';
-          const name = esc(r.customer_name || '—');
-          const btn =
-            r.status === 'CONFIRMED'
-              ? `<button type="button" class="btn btn-secondary" data-res-cancel="${r.id}">✕ Cancelar</button>`
-              : '';
-          return `<tr>
-            <td>${esc(r.id)}</td>
-            <td>${name}</td>
-            <td>${esc(r.phone || '—')}</td>
-            <td>${esc(r.start_at ? when : '—')}</td>
-            <td>${badge}</td>
-            <td>${btn}</td>
-          </tr>`;
-        })
-        .join('') || '<tr><td colspan="6">SIN reservas confirmadas todavia.</td></tr>';
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6">Error: ${esc(err.message)}</td></tr>`;
-  }
-}
-
-document.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('[data-res-cancel]');
-  if (!btn) return;
-  const id = btn.dataset.resCancel;
-  if (!window.confirm(`¿Cancelar la reserva N° ${id}? El cliente no recibirá aviso (tenlo a mano por WhatsApp).`)) return;
-  btn.disabled = true;
-  try {
-    await apiFetch(`/api/reservations/${id}/cancel`, { method: 'POST' });
-    await loadReservations();
-  } catch (err) {
-    alert(err.message);
-    btn.disabled = false;
-  }
-});
-
-if (document.getElementById('btn-res-reload')) {
-  document.getElementById('btn-res-reload').addEventListener('click', loadReservations);
-}
-
-// ---------------------------------------------------------------------
 // Logs / errores
 // ---------------------------------------------------------------------
 async function loadLogs() {
@@ -1029,7 +970,6 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
       loadChatList();
       loadQuickReplies();
     }
-    if (btn.dataset.tab === 'tab-reservations') loadReservations();
   });
 });
 
@@ -1483,7 +1423,6 @@ function refreshAll() {
   loadConversations();
   loadQueue();
   loadScheduled();
-  loadReservations();
   loadLogs();
   loadProducts();
 }
