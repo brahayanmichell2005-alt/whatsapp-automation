@@ -716,7 +716,7 @@ select option { background: var(--surface); color: var(--text); }
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-  height: calc(100vh - 205px);
+  height: calc(100vh - 218px);
   min-height: 560px;
   box-shadow: var(--shadow);
 }
