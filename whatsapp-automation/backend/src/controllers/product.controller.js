@@ -47,8 +47,12 @@ async function create(req, res, next) {
     if (!image.ok) return res.status(400).json({ error: image.error });
     const item = await productModel.create({
       name,
+      code: cleanText(req.body.code, 50),
       price: cleanText(req.body.price, 50),
       cost: cleanText(req.body.cost, 50),
+      box_price: cleanText(req.body.box_price, 50),
+      units_per_box: cleanText(req.body.units_per_box, 50),
+      unit_measure: cleanText(req.body.unit_measure, 50),
       image_url: image.value || null,
       description: cleanText(req.body.description, 2000),
       stock: cleanText(req.body.stock, 50),
@@ -72,6 +76,10 @@ async function update(req, res, next) {
     }
     if (req.body.price !== undefined) fields.price = cleanText(req.body.price, 50);
     if (req.body.cost !== undefined) fields.cost = cleanText(req.body.cost, 50);
+    if (req.body.code !== undefined) fields.code = cleanText(req.body.code, 50);
+    if (req.body.box_price !== undefined) fields.box_price = cleanText(req.body.box_price, 50);
+    if (req.body.units_per_box !== undefined) fields.units_per_box = cleanText(req.body.units_per_box, 50);
+    if (req.body.unit_measure !== undefined) fields.unit_measure = cleanText(req.body.unit_measure, 50);
     if (req.body.image_url !== undefined) {
       const image = parseImage(req.body.image_url);
       if (!image.ok) return res.status(400).json({ error: image.error });

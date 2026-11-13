@@ -1350,14 +1350,14 @@ function renderProducts() {
   const filtro = productsState.filter.trim().toLowerCase();
   const visibles = productsState.items.filter((p) => {
     if (!filtro) return true;
-    return [p.id, p.name, p.cost, p.price, p.stock, p.description]
+    return [p.id, p.code, p.name, p.cost, p.price, p.box_price, p.unit_measure, p.stock, p.description]
       .some((v) => String(v || '').toLowerCase().includes(filtro));
   });
   tbody.innerHTML =
     visibles
       .map(
         (p) => `<tr>
-          <td class="mono prod-id">#${esc(p.id)}</td>
+          <td class="mono prod-id">${esc(p.code || `#${p.id}`)}</td>
           <td>${
             p.image_url
               ? `<img class="prod-thumb" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" />`
@@ -1421,8 +1421,12 @@ function openProductModal(id = null) {
   const p = id ? productsState.items.find((x) => x.id === id) : null;
   document.getElementById('prod-modal-title').textContent = p ? `✏️ Editar: ${p.name}` : '＋ Nuevo producto';
   document.getElementById('prod-name').value = p ? p.name || '' : '';
+  document.getElementById('prod-code').value = p ? p.code || '' : '';
+  document.getElementById('prod-measure').value = p ? p.unit_measure || '' : '';
   document.getElementById('prod-cost').value = p ? p.cost || '' : '';
   document.getElementById('prod-price').value = p ? p.price || '' : '';
+  document.getElementById('prod-box-price').value = p ? p.box_price || '' : '';
+  document.getElementById('prod-units-box').value = p ? p.units_per_box || '' : '';
   document.getElementById('prod-stock').value = p ? p.stock || '' : '';
   document.getElementById('prod-desc').value = p ? p.description || '' : '';
   document.getElementById('prod-active').checked = p ? p.active === true : true;
@@ -1436,8 +1440,12 @@ function openProductModal(id = null) {
 async function saveProduct() {
   const body = {
     name: document.getElementById('prod-name').value.trim(),
+    code: document.getElementById('prod-code').value.trim(),
+    unit_measure: document.getElementById('prod-measure').value.trim(),
     cost: document.getElementById('prod-cost').value.trim(),
     price: document.getElementById('prod-price').value.trim(),
+    box_price: document.getElementById('prod-box-price').value.trim(),
+    units_per_box: document.getElementById('prod-units-box').value.trim(),
     stock: document.getElementById('prod-stock').value.trim(),
     description: document.getElementById('prod-desc').value.trim(),
     active: document.getElementById('prod-active').checked,
@@ -1462,17 +1470,34 @@ async function saveProduct() {
 }
 
 // ---------------------------------------------------------------------
-// Importar / exportar el catalogo por Excel (CSV compatible con Excel)
+// Importar / exportar el catalogo con la plantilla de Excel:
+//   ID_Unico | producto | Descripcion | PRECIO COSTO | CANTIDAD/unitario |
+//   precio venta/uni | precio venta/Caja | cantida/dCaja | Und.Medida | imagen
 // Las imagenes no se exportan y, al importar, las fotos existentes se
-// conservan porque nunca se envia image_url en la actualizacion.
+// conservan porque nunca se envia image_url (la columna imagen no se toca).
 // ---------------------------------------------------------------------
-const PRODUCT_CSV_COLUMNS = [
-  { key: 'id', labels: ['id', 'codigo', 'cod', 'codigo de producto', 'sku'] },
+const PRODUCT_TABLE_COLUMNS = [
+  { key: 'code', labels: ['id unico', 'id', 'codigo', 'codigo de producto', 'sku', 'cod'] },
   { key: 'name', labels: ['producto', 'nombre', 'nombre del producto', 'name'] },
+  { key: 'description', labels: ['descripcion', 'description', 'detalle', 'notas'] },
   { key: 'cost', labels: ['precio costo', 'precio de costo', 'costo', 'cost', 'precio compra'] },
-  { key: 'price', labels: ['precio venta', 'precio de venta', 'venta', 'precio', 'price', 'pvp'] },
-  { key: 'stock', labels: ['stock', 'cantidad', 'existencias'] },
-  { key: 'description', labels: ['descripcion', 'detalle', 'description', 'notas'] },
+  { key: 'stock', labels: ['cantidad unitario', 'cantidad', 'stock', 'existencias', 'unidades'] },
+  {
+    key: 'price',
+    labels: ['precio venta uni', 'precio venta', 'precio de venta', 'venta', 'precio', 'price', 'pvp'],
+  },
+  {
+    key: 'box_price',
+    labels: ['precio venta caja', 'precio caja', 'precio de venta por caja', 'precio venta por caja'],
+  },
+  {
+    key: 'units_per_box',
+    labels: ['cantida dcaja', 'cantidad caja', 'cantidad por caja', 'unidades por caja', 'unidades caja'],
+  },
+  {
+    key: 'unit_measure',
+    labels: ['und medida', 'unidad de medida', 'unidad medida', 'medida', 'unidad', 'um'],
+  },
   { key: 'active', labels: ['estado', 'activo', 'active', 'habilitado'] },
 ];
 
@@ -1539,6 +1564,107 @@ function parseCsvRows(text, delimiter) {
   return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
 }
 
+function xlsxColumnIndex(ref) {
+  const letters = String(ref).replace(/[^A-Za-z]/g, '').toUpperCase();
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return Math.max(0, n - 1);
+}
+
+// Lee un .xlsx sin librerias externas: descomprime el ZIP con el navegador
+// (DecompressionStream) y extrae las filas de la primera hoja.
+async function readXlsxRows(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let eocd = -1;
+  const limit = Math.max(0, bytes.length - 66000);
+  for (let i = bytes.length - 22; i >= limit; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('El archivo no es un Excel válido (.xlsx)');
+  const total = view.getUint16(eocd + 10, true);
+  let offset = view.getUint32(eocd + 16, true);
+  const entries = new Map();
+  for (let i = 0; i < total; i += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) break;
+    const method = view.getUint16(offset + 10, true);
+    const compSize = view.getUint32(offset + 20, true);
+    const nameLen = view.getUint16(offset + 28, true);
+    const extraLen = view.getUint16(offset + 30, true);
+    const commentLen = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(offset + 46, offset + 46 + nameLen));
+    entries.set(name, { method, compSize, localOffset });
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
+  const decoder = new TextDecoder();
+  const readEntry = async (name) => {
+    const entry = entries.get(name);
+    if (!entry) return '';
+    const nameLen = view.getUint16(entry.localOffset + 26, true);
+    const extraLen = view.getUint16(entry.localOffset + 28, true);
+    const start = entry.localOffset + 30 + nameLen + extraLen;
+    const data = bytes.subarray(start, start + entry.compSize);
+    if (entry.method === 0) return decoder.decode(data);
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Response(stream).text();
+  };
+
+  const sheetName =
+    [...entries.keys()].find((k) => /^xl\/worksheets\/sheet1\.xml$/i.test(k)) ||
+    [...entries.keys()].find((k) => /^xl\/worksheets\/.*\.xml$/i.test(k));
+  if (!sheetName) throw new Error('El Excel no contiene una hoja de cálculo');
+  const [sheetXml, sharedXml] = await Promise.all([
+    readEntry(sheetName),
+    readEntry('xl/sharedStrings.xml'),
+  ]);
+
+  const strings = [];
+  if (sharedXml) {
+    const sharedDoc = new DOMParser().parseFromString(sharedXml, 'application/xml');
+    for (const si of sharedDoc.getElementsByTagName('si')) {
+      strings.push([...si.getElementsByTagName('t')].map((t) => t.textContent || '').join(''));
+    }
+  }
+
+  const sheet = new DOMParser().parseFromString(sheetXml, 'application/xml');
+  const rows = [];
+  for (const rowEl of sheet.getElementsByTagName('row')) {
+    const cells = [];
+    for (const cellEl of rowEl.getElementsByTagName('c')) {
+      const ref = cellEl.getAttribute('r') || '';
+      const idx = ref ? xlsxColumnIndex(ref) : cells.length;
+      const type = cellEl.getAttribute('t');
+      let value = '';
+      if (type === 'inlineStr') {
+        value = [...cellEl.getElementsByTagName('t')].map((t) => t.textContent || '').join('');
+      } else {
+        const v = cellEl.getElementsByTagName('v')[0];
+        value = v ? v.textContent || '' : '';
+        if (type === 's') value = strings[Number(value)] || '';
+      }
+      cells[idx] = value;
+    }
+    const fila = Array.from(cells, (v) => (v === undefined || v === null ? '' : String(v)));
+    if (fila.some((v) => v.trim() !== '')) rows.push(fila);
+  }
+  return rows;
+}
+
+async function readProductRowsFromFile(file) {
+  const nombre = String(file.name || '').toLowerCase();
+  const esXlsx = /\.xlsx$/i.test(nombre) || /spreadsheetml/i.test(file.type || '');
+  if (!esXlsx) {
+    const text = await file.text();
+    const firstLine = text.replace(/^\ufeff/, '').split(/\r?\n/)[0] || '';
+    return parseCsvRows(text, detectCsvDelimiter(firstLine));
+  }
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('Este navegador no puede leer .xlsx. Guarda el archivo como CSV UTF-8 e inténtalo de nuevo.');
+  }
+  return readXlsxRows(await file.arrayBuffer());
+}
+
 function csvActiveValue(value, fallback) {
   const s = csvHeaderKey(value);
   if (!s) return fallback;
@@ -1547,69 +1673,100 @@ function csvActiveValue(value, fallback) {
   return fallback;
 }
 
-function mapProductCsvRows(rows) {
+function mapProductTableRows(rows) {
   if (!rows.length) return [];
   const header = rows[0].map(csvHeaderKey);
   const hasHeader = header.some((h) =>
-    PRODUCT_CSV_COLUMNS.some((col) => col.labels.includes(h))
+    PRODUCT_TABLE_COLUMNS.some((col) => col.labels.includes(h))
   );
   const index = {};
   if (hasHeader) {
-    PRODUCT_CSV_COLUMNS.forEach((col) => {
+    PRODUCT_TABLE_COLUMNS.forEach((col) => {
       const i = header.findIndex((h) => col.labels.includes(h));
       if (i >= 0) index[col.key] = i;
     });
   } else {
-    ['id', 'name', 'cost', 'price', 'stock', 'description', 'active'].forEach((k, i) => {
-      index[k] = i;
-    });
+    // Orden de la plantilla, sin la columna imagen.
+    ['code', 'name', 'description', 'cost', 'stock', 'price', 'box_price', 'units_per_box', 'unit_measure']
+      .forEach((k, i) => {
+        index[k] = i;
+      });
   }
   const dataRows = hasHeader ? rows.slice(1) : rows;
   return dataRows
     .map((cells, n) => {
       const get = (k) =>
         index[k] === undefined ? '' : String(cells[index[k]] === undefined ? '' : cells[index[k]]).trim();
-      const name = get('name');
+      const rawName = get('name');
+      const rawDescription = get('description');
+      // La plantilla real trae el nombre del producto en "Descripcion" y deja
+      // "producto" vacio. Si "producto" llega vacio, se usa la descripcion
+      // como nombre para que el catalogo quede igual de legible.
+      const name = rawName || rawDescription;
       if (!name) return null;
+      const rawCode = get('code');
+      const interno = /^#\d+$/.test(rawCode) ? Number(rawCode.slice(1)) : null;
       return {
         line: n + (hasHeader ? 2 : 1),
-        id: get('id').replace(/^#/, ''),
+        interno,
+        code: interno ? '' : rawCode.slice(0, 50),
         name: name.slice(0, 150),
+        description: rawName ? rawDescription : '',
         cost: get('cost'),
-        price: get('price'),
         stock: get('stock'),
-        description: get('description'),
+        price: get('price'),
+        box_price: get('box_price'),
+        units_per_box: get('units_per_box'),
+        unit_measure: get('unit_measure'),
         active: get('active'),
       };
     })
     .filter(Boolean);
 }
 
-function findProductForCsvRow(row) {
-  const id = Number(String(row.id || '').replace(/[^0-9]/g, ''));
-  if (id) {
-    const byId = productsState.items.find((p) => Number(p.id) === id);
+function findProductForTableRow(row) {
+  if (row.interno) {
+    const byId = productsState.items.find((p) => Number(p.id) === row.interno);
     if (byId) return byId;
+  }
+  const code = csvHeaderKey(row.code);
+  if (code) {
+    const byCode = productsState.items.find((p) => csvHeaderKey(p.code) === code);
+    if (byCode) return byCode;
   }
   const name = csvHeaderKey(row.name);
   return productsState.items.find((p) => csvHeaderKey(p.name) === name) || null;
 }
 
 function exportProductsCsv() {
-  const header = ['ID', 'Producto', 'Precio costo', 'Precio venta', 'Stock', 'Descripción', 'Estado'];
+  const header = [
+    'ID_Unico',
+    'producto',
+    'Descripcion',
+    'PRECIO COSTO',
+    'CANTIDAD/unitario',
+    'precio venta/uni',
+    'precio venta/Caja',
+    'cantida/dCaja',
+    'Und.Medida',
+    'imagen',
+  ];
   const lines = [header.map(csvCell).join(';')];
   [...productsState.items]
     .sort((a, b) => Number(a.id) - Number(b.id))
     .forEach((p) => {
       lines.push(
         [
-          `#${p.id}`,
+          p.code || `#${p.id}`,
           p.name || '',
-          p.cost || '',
-          p.price || '',
-          p.stock || '',
           p.description || '',
-          p.active ? 'ACTIVO' : 'PAUSADO',
+          p.cost || '',
+          p.stock || '',
+          p.price || '',
+          p.box_price || '',
+          p.units_per_box || '',
+          p.unit_measure || '',
+          /^https?:\/\//i.test(String(p.image_url || '')) ? p.image_url : '',
         ]
           .map(csvCell)
           .join(';')
@@ -1629,14 +1786,11 @@ function exportProductsCsv() {
   return productsState.items.length;
 }
 
-async function importProductsCsv(file, options = {}) {
+async function importProductsFile(file, options = {}) {
   const status = options.status || document.getElementById('prod-import-status');
-  const text = await file.text();
-  const firstLine = text.replace(/^\ufeff/, '').split(/\r?\n/)[0] || '';
-  const delimiter = detectCsvDelimiter(firstLine);
-  const rows = mapProductCsvRows(parseCsvRows(text, delimiter));
+  const rows = mapProductTableRows(await readProductRowsFromFile(file));
   if (!rows.length) {
-    throw new Error('No se encontraron productos. El archivo debe tener al menos la columna "Producto".');
+    throw new Error('No se encontraron productos. El archivo debe tener al menos la columna "producto".');
   }
 
   const resumen = { creados: 0, actualizados: 0, omitidos: 0, errores: [] };
@@ -1646,16 +1800,19 @@ async function importProductsCsv(file, options = {}) {
       status.classList.remove('hidden');
       status.innerHTML = `⏳ Importando ${i + 1} de ${rows.length}... (✅ ${resumen.creados} nuevos · ♻️ ${resumen.actualizados} actualizados)`;
     }
-    const existente = findProductForCsvRow(row);
+    const existente = findProductForTableRow(row);
     const body = {
       name: row.name,
-      cost: row.cost,
-      price: row.price,
-      stock: row.stock,
       description: row.description,
+      cost: row.cost,
+      stock: row.stock,
+      price: row.price,
+      box_price: row.box_price,
+      units_per_box: row.units_per_box,
+      unit_measure: row.unit_measure,
     };
-    const active = csvActiveValue(row.active, existente ? existente.active === true : true);
-    body.active = active;
+    if (row.code || !existente) body.code = row.code;
+    body.active = csvActiveValue(row.active, existente ? existente.active === true : true);
     try {
       if (existente) {
         await apiFetch(`/api/products/${existente.id}`, { method: 'PUT', body: JSON.stringify(body) });
@@ -1675,7 +1832,6 @@ async function importProductsCsv(file, options = {}) {
   }
   return resumen;
 }
-
 // Eventos del catalogo (elementos fijos, se enganchan una sola vez).
 (function initProductsEvents() {
   const search = document.getElementById('prod-search');
@@ -1742,7 +1898,7 @@ async function importProductsCsv(file, options = {}) {
         status.innerHTML = '⏳ Leyendo el archivo...';
       }
       try {
-        const r = await importProductsCsv(file, { status });
+        const r = await importProductsFile(file, { status });
         await loadProducts();
         const detalle = [
           `${r.creados} nuevo${r.creados === 1 ? '' : 's'}`,

@@ -376,8 +376,8 @@
                   <p class="section-sub">La IA lee esta lista para responder precios y stock a tus clientes en WhatsApp</p>
                 </div>
                 <div class="btn-row">
-                  <input type="file" id="prod-import-file" accept=".csv,.txt,text/csv" hidden />
-                  <button type="button" id="btn-prod-import" class="btn btn-secondary" title="Cargar el catálogo desde un archivo de Excel (CSV)">📤 Importar Excel</button>
+                  <input type="file" id="prod-import-file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden />
+                  <button type="button" id="btn-prod-import" class="btn btn-secondary" title="Cargar el catálogo desde un archivo de Excel (.xlsx o .csv)">📤 Importar Excel</button>
                   <button type="button" id="btn-prod-export" class="btn btn-secondary" title="Descargar el catálogo sin imágenes para editarlo en Excel">⬇️ Exportar Excel</button>
                   <button type="button" id="btn-prod-reload" class="top-btn" title="Actualizar">⟳</button>
                   <button type="button" id="btn-prod-new" class="btn btn-primary">＋ Nuevo producto</button>
@@ -387,8 +387,8 @@
                 <input type="search" id="prod-search" placeholder="Buscar producto..." autocomplete="off" />
               </div>
               <p class="prod-io-hint">
-                Excel: descarga el catálogo, edítalo y vuelve a importarlo. Las imágenes no se incluyen ni se borran.
-                Si tu archivo es <strong>.xlsx</strong>, guárdalo como <strong>CSV UTF-8</strong> en Excel.
+                Se usa la plantilla del catálogo: <span class="mono">ID_Unico · producto · Descripcion · PRECIO COSTO · CANTIDAD/unitario · precio venta/uni · precio venta/Caja · cantida/dCaja · Und.Medida · imagen</span>.
+                Puedes importar el <strong>.xlsx</strong> directamente o el <strong>.csv</strong> exportado. La columna <strong>imagen</strong> no se toca y las fotos actuales se conservan.
               </p>
               <div id="prod-import-status" class="csv-progress hidden"></div>
               <div class="table-wrap">
@@ -594,6 +594,20 @@
         <input type="text" id="prod-name" maxlength="150" placeholder="ej. Polo bordado azul talla M" />
         <div class="grid-3">
           <div>
+            <label class="field-label">ID único / código</label>
+            <input type="text" id="prod-code" class="mono" maxlength="50" placeholder="MS-0123" />
+          </div>
+          <div>
+            <label class="field-label">Unidad de medida</label>
+            <input type="text" id="prod-measure" maxlength="50" placeholder="Unidad" />
+          </div>
+          <div>
+            <label class="field-label">Cantidad / stock</label>
+            <input type="text" id="prod-stock" maxlength="50" placeholder="12" />
+          </div>
+        </div>
+        <div class="grid-3">
+          <div>
             <label class="field-label">Precio de costo</label>
             <input type="text" id="prod-cost" class="mono" maxlength="50" placeholder="S/ 28.00" />
           </div>
@@ -602,11 +616,20 @@
             <input type="text" id="prod-price" class="mono" maxlength="50" placeholder="S/ 45.90" />
           </div>
           <div>
-            <label class="field-label">Stock</label>
-            <input type="text" id="prod-stock" maxlength="50" placeholder="12 unidades" />
+            <label class="field-label">Precio venta por caja</label>
+            <input type="text" id="prod-box-price" class="mono" maxlength="50" placeholder="S/ 220.00" />
           </div>
         </div>
-        <label class="crm-check" style="margin-top:10px"><input type="checkbox" id="prod-active" checked /> Activo (la IA lo menciona)</label>
+        <div class="grid-3">
+          <div>
+            <label class="field-label">Unidades por caja</label>
+            <input type="text" id="prod-units-box" class="mono" maxlength="50" placeholder="1" />
+          </div>
+          <div>
+            <label class="field-label">Estado</label>
+            <label class="crm-check" style="margin-top:8px"><input type="checkbox" id="prod-active" checked /> Activo (la IA lo menciona)</label>
+          </div>
+        </div>
         <label class="field-label">Imagen del producto (miniatura)</label>
         <div class="prod-img-pick">
           <div class="prod-img-preview" id="prod-img-preview">
