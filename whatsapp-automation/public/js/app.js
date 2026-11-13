@@ -1478,7 +1478,9 @@ async function saveProduct() {
 // ---------------------------------------------------------------------
 const PRODUCT_TABLE_COLUMNS = [
   { key: 'code', labels: ['id unico', 'id', 'codigo', 'codigo de producto', 'sku', 'cod'] },
-  { key: 'name', labels: ['producto', 'nombre', 'nombre del producto', 'name'] },
+  // "producto" es la columna corta de la plantilla: puede venir vacia.
+  { key: 'producto', labels: ['producto'] },
+  { key: 'name', labels: ['nombre', 'nombre del producto', 'name'] },
   { key: 'description', labels: ['descripcion', 'description', 'detalle', 'notas'] },
   { key: 'cost', labels: ['precio costo', 'precio de costo', 'costo', 'cost', 'precio compra'] },
   { key: 'stock', labels: ['cantidad unitario', 'cantidad', 'stock', 'existencias', 'unidades'] },
@@ -1687,7 +1689,7 @@ function mapProductTableRows(rows) {
     });
   } else {
     // Orden de la plantilla, sin la columna imagen.
-    ['code', 'name', 'description', 'cost', 'stock', 'price', 'box_price', 'units_per_box', 'unit_measure']
+    ['code', 'producto', 'description', 'cost', 'stock', 'price', 'box_price', 'units_per_box', 'unit_measure']
       .forEach((k, i) => {
         index[k] = i;
       });
@@ -1697,12 +1699,21 @@ function mapProductTableRows(rows) {
     .map((cells, n) => {
       const get = (k) =>
         index[k] === undefined ? '' : String(cells[index[k]] === undefined ? '' : cells[index[k]]).trim();
-      const rawName = get('name');
+      // Columna "producto": en la plantilla del usuario va vacia y se llena a
+      // mano; si viene con texto, ese es el nombre visible del producto.
+      const rawProducto = get('producto') || get('name');
       const rawDescription = get('description');
-      // La plantilla real trae el nombre del producto en "Descripcion" y deja
-      // "producto" vacio. Si "producto" llega vacio, se usa la descripcion
-      // como nombre para que el catalogo quede igual de legible.
-      const name = rawName || rawDescription;
+      let name = rawProducto;
+      let description = '';
+      if (rawProducto) {
+        description = rawDescription;
+      } else {
+        // Sin "producto": la Descripcion hace de nombre. Si trae varias lineas,
+        // la primera es el nombre y el resto los detalles para la IA.
+        const corte = rawDescription.indexOf('\n');
+        name = (corte >= 0 ? rawDescription.slice(0, corte) : rawDescription).trim();
+        description = corte >= 0 ? rawDescription.slice(corte + 1).trim() : '';
+      }
       if (!name) return null;
       const rawCode = get('code');
       const interno = /^#\d+$/.test(rawCode) ? Number(rawCode.slice(1)) : null;
@@ -1710,8 +1721,9 @@ function mapProductTableRows(rows) {
         line: n + (hasHeader ? 2 : 1),
         interno,
         code: interno ? '' : rawCode.slice(0, 50),
+        producto: rawProducto.slice(0, 150),
         name: name.slice(0, 150),
-        description: rawName ? rawDescription : '',
+        description,
         cost: get('cost'),
         stock: get('stock'),
         price: get('price'),
@@ -1734,6 +1746,11 @@ function findProductForTableRow(row) {
     const byCode = productsState.items.find((p) => csvHeaderKey(p.code) === code);
     if (byCode) return byCode;
   }
+  const producto = csvHeaderKey(row.producto);
+  if (producto) {
+    const byProducto = productsState.items.find((p) => csvHeaderKey(p.producto) === producto);
+    if (byProducto) return byProducto;
+  }
   const name = csvHeaderKey(row.name);
   return productsState.items.find((p) => csvHeaderKey(p.name) === name) || null;
 }
@@ -1755,11 +1772,19 @@ function exportProductsCsv() {
   [...productsState.items]
     .sort((a, b) => Number(a.id) - Number(b.id))
     .forEach((p) => {
+      // La columna "producto" queda tal cual la maneja el usuario (vacia si el
+      // no la ha llenado). El nombre va en "Descripcion"; si hay detalles, se
+      // agregan en una segunda linea para no perderlos al reimportar.
+      const producto = p.producto || '';
+      const detalles = String(p.description || '').trim();
+      const descripcion = producto
+        ? detalles
+        : [String(p.name || '').trim(), detalles].filter(Boolean).join('\n');
       lines.push(
         [
           p.code || `#${p.id}`,
-          p.name || '',
-          p.description || '',
+          producto,
+          descripcion,
           p.cost || '',
           p.stock || '',
           p.price || '',
@@ -1790,7 +1815,7 @@ async function importProductsFile(file, options = {}) {
   const status = options.status || document.getElementById('prod-import-status');
   const rows = mapProductTableRows(await readProductRowsFromFile(file));
   if (!rows.length) {
-    throw new Error('No se encontraron productos. El archivo debe tener al menos la columna "producto".');
+    throw new Error('No se encontraron productos. El archivo debe tener la columna "producto" o "Descripcion".');
   }
 
   const resumen = { creados: 0, actualizados: 0, omitidos: 0, errores: [] };
@@ -1802,6 +1827,7 @@ async function importProductsFile(file, options = {}) {
     }
     const existente = findProductForTableRow(row);
     const body = {
+      producto: row.producto,
       name: row.name,
       description: row.description,
       cost: row.cost,

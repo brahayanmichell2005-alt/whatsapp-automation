@@ -20,6 +20,7 @@ async function ensureReady() {
       box_price TEXT,
       units_per_box TEXT,
       unit_measure TEXT,
+      producto TEXT,
       image_url TEXT,
       description TEXT,
       stock TEXT,
@@ -37,6 +38,7 @@ async function ensureReady() {
     ALTER TABLE products ADD COLUMN IF NOT EXISTS box_price TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS units_per_box TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS unit_measure TEXT;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS producto TEXT;
   `);
   ready = true;
 }
@@ -111,6 +113,7 @@ async function create({
   box_price = null,
   units_per_box = null,
   unit_measure = null,
+  producto = null,
   image_url = null,
   description = null,
   stock = null,
@@ -119,8 +122,8 @@ async function create({
   await ensureReady();
   const { rows } = await pool.query(
     `INSERT INTO products
-       (code, name, price, cost, box_price, units_per_box, unit_measure, image_url, description, stock, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+       (code, name, price, cost, box_price, units_per_box, unit_measure, producto, image_url, description, stock, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
     [
       code,
       String(name).trim().slice(0, 150),
@@ -129,6 +132,7 @@ async function create({
       box_price,
       units_per_box,
       unit_measure,
+      producto,
       image_url,
       description,
       stock,
@@ -148,6 +152,7 @@ async function update(id, fields) {
     'box_price',
     'units_per_box',
     'unit_measure',
+    'producto',
     'image_url',
     'description',
     'stock',

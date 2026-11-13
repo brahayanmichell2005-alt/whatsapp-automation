@@ -53,6 +53,7 @@ async function create(req, res, next) {
       box_price: cleanText(req.body.box_price, 50),
       units_per_box: cleanText(req.body.units_per_box, 50),
       unit_measure: cleanText(req.body.unit_measure, 50),
+      producto: cleanText(req.body.producto, 150),
       image_url: image.value || null,
       description: cleanText(req.body.description, 2000),
       stock: cleanText(req.body.stock, 50),
@@ -80,6 +81,7 @@ async function update(req, res, next) {
     if (req.body.box_price !== undefined) fields.box_price = cleanText(req.body.box_price, 50);
     if (req.body.units_per_box !== undefined) fields.units_per_box = cleanText(req.body.units_per_box, 50);
     if (req.body.unit_measure !== undefined) fields.unit_measure = cleanText(req.body.unit_measure, 50);
+    if (req.body.producto !== undefined) fields.producto = cleanText(req.body.producto, 150);
     if (req.body.image_url !== undefined) {
       const image = parseImage(req.body.image_url);
       if (!image.ok) return res.status(400).json({ error: image.error });
