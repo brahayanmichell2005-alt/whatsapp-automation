@@ -1461,6 +1461,221 @@ async function saveProduct() {
   }
 }
 
+// ---------------------------------------------------------------------
+// Importar / exportar el catalogo por Excel (CSV compatible con Excel)
+// Las imagenes no se exportan y, al importar, las fotos existentes se
+// conservan porque nunca se envia image_url en la actualizacion.
+// ---------------------------------------------------------------------
+const PRODUCT_CSV_COLUMNS = [
+  { key: 'id', labels: ['id', 'codigo', 'cod', 'codigo de producto', 'sku'] },
+  { key: 'name', labels: ['producto', 'nombre', 'nombre del producto', 'name'] },
+  { key: 'cost', labels: ['precio costo', 'precio de costo', 'costo', 'cost', 'precio compra'] },
+  { key: 'price', labels: ['precio venta', 'precio de venta', 'venta', 'precio', 'price', 'pvp'] },
+  { key: 'stock', labels: ['stock', 'cantidad', 'existencias'] },
+  { key: 'description', labels: ['descripcion', 'detalle', 'description', 'notas'] },
+  { key: 'active', labels: ['estado', 'activo', 'active', 'habilitado'] },
+];
+
+function csvHeaderKey(v) {
+  return String(v || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function csvCell(value) {
+  const s = String(value === undefined || value === null ? '' : value);
+  return /[";\n\r]|^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function detectCsvDelimiter(line) {
+  const counts = { ';': 0, ',': 0, '\t': 0 };
+  let quoted = false;
+  for (const ch of String(line || '')) {
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && Object.prototype.hasOwnProperty.call(counts, ch)) counts[ch] += 1;
+  }
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || ';';
+}
+
+// Parser CSV real: respeta comillas, separadores y saltos de linea dentro
+// de una descripcion (Excel los escribe asi cuando el texto es largo).
+function parseCsvRows(text, delimiter) {
+  const src = String(text || '').replace(/^\ufeff/, '');
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { cell += '"'; i += 1; }
+        else quoted = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      quoted = true;
+    } else if (ch === delimiter) {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+  if (cell.length || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
+}
+
+function csvActiveValue(value, fallback) {
+  const s = csvHeaderKey(value);
+  if (!s) return fallback;
+  if (['activo', 'active', 'si', 'true', '1', 'habilitado', 'yes', 'disponible'].includes(s)) return true;
+  if (['pausado', 'inactivo', 'inactive', 'no', 'false', '0', 'deshabilitado', 'agotado'].includes(s)) return false;
+  return fallback;
+}
+
+function mapProductCsvRows(rows) {
+  if (!rows.length) return [];
+  const header = rows[0].map(csvHeaderKey);
+  const hasHeader = header.some((h) =>
+    PRODUCT_CSV_COLUMNS.some((col) => col.labels.includes(h))
+  );
+  const index = {};
+  if (hasHeader) {
+    PRODUCT_CSV_COLUMNS.forEach((col) => {
+      const i = header.findIndex((h) => col.labels.includes(h));
+      if (i >= 0) index[col.key] = i;
+    });
+  } else {
+    ['id', 'name', 'cost', 'price', 'stock', 'description', 'active'].forEach((k, i) => {
+      index[k] = i;
+    });
+  }
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  return dataRows
+    .map((cells, n) => {
+      const get = (k) =>
+        index[k] === undefined ? '' : String(cells[index[k]] === undefined ? '' : cells[index[k]]).trim();
+      const name = get('name');
+      if (!name) return null;
+      return {
+        line: n + (hasHeader ? 2 : 1),
+        id: get('id').replace(/^#/, ''),
+        name: name.slice(0, 150),
+        cost: get('cost'),
+        price: get('price'),
+        stock: get('stock'),
+        description: get('description'),
+        active: get('active'),
+      };
+    })
+    .filter(Boolean);
+}
+
+function findProductForCsvRow(row) {
+  const id = Number(String(row.id || '').replace(/[^0-9]/g, ''));
+  if (id) {
+    const byId = productsState.items.find((p) => Number(p.id) === id);
+    if (byId) return byId;
+  }
+  const name = csvHeaderKey(row.name);
+  return productsState.items.find((p) => csvHeaderKey(p.name) === name) || null;
+}
+
+function exportProductsCsv() {
+  const header = ['ID', 'Producto', 'Precio costo', 'Precio venta', 'Stock', 'Descripción', 'Estado'];
+  const lines = [header.map(csvCell).join(';')];
+  [...productsState.items]
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .forEach((p) => {
+      lines.push(
+        [
+          `#${p.id}`,
+          p.name || '',
+          p.cost || '',
+          p.price || '',
+          p.stock || '',
+          p.description || '',
+          p.active ? 'ACTIVO' : 'PAUSADO',
+        ]
+          .map(csvCell)
+          .join(';')
+      );
+    });
+  const hoy = new Date();
+  const fecha = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `catalogo-${fecha}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return productsState.items.length;
+}
+
+async function importProductsCsv(file, options = {}) {
+  const status = options.status || document.getElementById('prod-import-status');
+  const text = await file.text();
+  const firstLine = text.replace(/^\ufeff/, '').split(/\r?\n/)[0] || '';
+  const delimiter = detectCsvDelimiter(firstLine);
+  const rows = mapProductCsvRows(parseCsvRows(text, delimiter));
+  if (!rows.length) {
+    throw new Error('No se encontraron productos. El archivo debe tener al menos la columna "Producto".');
+  }
+
+  const resumen = { creados: 0, actualizados: 0, omitidos: 0, errores: [] };
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (status) {
+      status.classList.remove('hidden');
+      status.innerHTML = `⏳ Importando ${i + 1} de ${rows.length}... (✅ ${resumen.creados} nuevos · ♻️ ${resumen.actualizados} actualizados)`;
+    }
+    const existente = findProductForCsvRow(row);
+    const body = {
+      name: row.name,
+      cost: row.cost,
+      price: row.price,
+      stock: row.stock,
+      description: row.description,
+    };
+    const active = csvActiveValue(row.active, existente ? existente.active === true : true);
+    body.active = active;
+    try {
+      if (existente) {
+        await apiFetch(`/api/products/${existente.id}`, { method: 'PUT', body: JSON.stringify(body) });
+        resumen.actualizados += 1;
+      } else {
+        await apiFetch('/api/products', { method: 'POST', body: JSON.stringify(body) });
+        resumen.creados += 1;
+      }
+    } catch (err) {
+      resumen.omitidos += 1;
+      if (resumen.errores.length < 5) {
+        resumen.errores.push(`Línea ${row.line}: ${err.message}`);
+      }
+    }
+    // Pausa amable con el limite de peticiones de la API (120 por minuto).
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  return resumen;
+}
+
 // Eventos del catalogo (elementos fijos, se enganchan una sola vez).
 (function initProductsEvents() {
   const search = document.getElementById('prod-search');
@@ -1500,6 +1715,58 @@ async function saveProduct() {
     if (imgFile) imgFile.value = '';
     setProductImagePreview(null);
   });
+
+  const btnExport = document.getElementById('btn-prod-export');
+  if (btnExport) btnExport.addEventListener('click', () => {
+    const total = exportProductsCsv();
+    const status = document.getElementById('prod-import-status');
+    if (status) {
+      status.classList.remove('hidden');
+      status.innerHTML = `✅ Catálogo exportado: ${total} producto${total === 1 ? '' : 's'} (sin imágenes) en un archivo que Excel abre directamente.`;
+    }
+  });
+
+  const btnImport = document.getElementById('btn-prod-import');
+  const importFile = document.getElementById('prod-import-file');
+  if (btnImport && importFile) {
+    btnImport.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files && importFile.files[0];
+      const status = document.getElementById('prod-import-status');
+      if (!file) return;
+      const original = btnImport.textContent;
+      btnImport.disabled = true;
+      btnImport.textContent = 'Importando...';
+      if (status) {
+        status.classList.remove('hidden');
+        status.innerHTML = '⏳ Leyendo el archivo...';
+      }
+      try {
+        const r = await importProductsCsv(file, { status });
+        await loadProducts();
+        const detalle = [
+          `${r.creados} nuevo${r.creados === 1 ? '' : 's'}`,
+          `${r.actualizados} actualizado${r.actualizados === 1 ? '' : 's'}`,
+          r.omitidos ? `${r.omitidos} omitido${r.omitidos === 1 ? '' : 's'}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        if (status) {
+          status.innerHTML =
+            `✅ Importación terminada: ${detalle}.` +
+            (r.errores.length
+              ? `<br><span class="prod-io-errors">${r.errores.map((e) => esc(e)).join('<br>')}</span>`
+              : '');
+        }
+      } catch (err) {
+        if (status) status.innerHTML = `⚠️ ${esc(err.message)}`;
+      } finally {
+        importFile.value = '';
+        btnImport.disabled = false;
+        btnImport.textContent = original;
+      }
+    });
+  }
 })();
 
 // ---------------------------------------------------------------------

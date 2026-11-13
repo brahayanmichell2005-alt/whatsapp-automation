@@ -640,6 +640,13 @@ select option { background: var(--surface); color: var(--text); }
 .modal-body input[type='checkbox'] { width: auto; }
 .modal-body .crm-check { width: auto; align-self: flex-start; align-items: center; margin: 12px 0 0; }
 
+/* Importar / exportar catalogo en Excel */
+.prod-io-hint { margin: -4px 0 12px; font-size: 0.7rem; line-height: 1.55; color: var(--muted); }
+.prod-io-hint strong { color: var(--text-2); }
+#prod-import-status { margin: -4px 0 12px; }
+#prod-import-status.hidden { display: none; }
+.prod-io-errors { color: #b91c1c; font-size: 0.72rem; }
+
 /* Las acciones del catalogo van en una sola linea para no alargar la fila */
 #table-products td:last-child { white-space: nowrap; }
 #table-products td:last-child .btn-row { flex-wrap: nowrap; gap: 6px; }

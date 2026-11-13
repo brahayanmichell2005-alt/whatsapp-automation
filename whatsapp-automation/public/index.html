@@ -376,6 +376,9 @@
                   <p class="section-sub">La IA lee esta lista para responder precios y stock a tus clientes en WhatsApp</p>
                 </div>
                 <div class="btn-row">
+                  <input type="file" id="prod-import-file" accept=".csv,.txt,text/csv" hidden />
+                  <button type="button" id="btn-prod-import" class="btn btn-secondary" title="Cargar el catálogo desde un archivo de Excel (CSV)">📤 Importar Excel</button>
+                  <button type="button" id="btn-prod-export" class="btn btn-secondary" title="Descargar el catálogo sin imágenes para editarlo en Excel">⬇️ Exportar Excel</button>
                   <button type="button" id="btn-prod-reload" class="top-btn" title="Actualizar">⟳</button>
                   <button type="button" id="btn-prod-new" class="btn btn-primary">＋ Nuevo producto</button>
                 </div>
@@ -383,6 +386,11 @@
               <div class="list-toolbar">
                 <input type="search" id="prod-search" placeholder="Buscar producto..." autocomplete="off" />
               </div>
+              <p class="prod-io-hint">
+                Excel: descarga el catálogo, edítalo y vuelve a importarlo. Las imágenes no se incluyen ni se borran.
+                Si tu archivo es <strong>.xlsx</strong>, guárdalo como <strong>CSV UTF-8</strong> en Excel.
+              </p>
+              <div id="prod-import-status" class="csv-progress hidden"></div>
               <div class="table-wrap">
                 <table class="data-table" id="table-products">
                   <thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Precio costo</th><th>Precio venta</th><th>Stock</th><th>Descripción</th><th>Estado</th><th>Acciones</th></tr></thead>
