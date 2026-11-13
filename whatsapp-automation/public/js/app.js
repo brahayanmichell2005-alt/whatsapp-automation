@@ -1278,12 +1278,59 @@ async function togglePin() {
 // Catalogo de productos (pestaña Catálogo): CRUD real contra la tabla
 // `products`, la misma que la IA consulta para responder precios/stock.
 // ---------------------------------------------------------------------
-const productsState = { items: [], editingId: null, filter: '' };
+const productsState = { items: [], editingId: null, filter: '', imageDraft: null };
+
+// Convierte un archivo de imagen en una miniatura JPEG liviana (data URL)
+// para guardarla dentro del catalogo sin depender de un servicio externo.
+function readImageAsDataUrl(file, maxSide = 640, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    if (!file || !String(file.type || '').startsWith('image/')) {
+      return reject(new Error('El archivo seleccionado no es una imagen'));
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      return reject(new Error('La imagen supera los 10 MB'));
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
+        const w = Math.max(1, Math.round((img.width || 1) * scale));
+        const h = Math.max(1, Math.round((img.height || 1) * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function setProductImagePreview(src) {
+  const box = document.getElementById('prod-img-preview');
+  productsState.imageDraft = src || null;
+  if (!box) return;
+  if (src) {
+    box.innerHTML = `<img src="${esc(src)}" alt="Miniatura del producto" />`;
+    box.classList.add('has-img');
+  } else {
+    box.innerHTML = '<span class="prod-img-empty">Sin imagen</span>';
+    box.classList.remove('has-img');
+  }
+}
 
 async function loadProducts() {
   const tbody = document.querySelector('#table-products tbody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="6">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9">Cargando...</td></tr>';
   try {
     productsState.items = (await apiFetch('/api/products')) || [];
     renderProducts();
@@ -1293,7 +1340,7 @@ async function loadProducts() {
       badge.hidden = productsState.items.length === 0;
     }
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6">Error: ${esc(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">Error: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -1303,14 +1350,21 @@ function renderProducts() {
   const filtro = productsState.filter.trim().toLowerCase();
   const visibles = productsState.items.filter((p) => {
     if (!filtro) return true;
-    return [p.name, p.price, p.stock, p.description]
+    return [p.id, p.name, p.cost, p.price, p.stock, p.description]
       .some((v) => String(v || '').toLowerCase().includes(filtro));
   });
   tbody.innerHTML =
     visibles
       .map(
         (p) => `<tr>
+          <td class="mono prod-id">#${esc(p.id)}</td>
+          <td>${
+            p.image_url
+              ? `<img class="prod-thumb" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" />`
+              : `<button type="button" class="prod-thumb prod-thumb-add" data-prod-img="${esc(p.id)}" title="Agregar imagen a ${esc(p.name)}"><span class="prod-thumb-plus">＋</span><span>Agregar imagen</span></button>`
+          }</td>
           <td><strong>${esc(p.name)}</strong></td>
+          <td class="mono">${esc(p.cost || '—')}</td>
           <td class="mono">${esc(p.price || '—')}</td>
           <td class="mono">${esc(p.stock || '—')}</td>
           <td>${esc(String(p.description || '').slice(0, 80))}${String(p.description || '').length > 80 ? '…' : ''}</td>
@@ -1326,8 +1380,11 @@ function renderProducts() {
           </td>
         </tr>`
       )
-      .join('') || '<tr><td colspan="6">Sin productos todavía. Agrega el primero con "＋ Nuevo producto".</td></tr>';
+      .join('') || '<tr><td colspan="9">Sin productos todavía. Agrega el primero con "＋ Nuevo producto".</td></tr>';
 
+  tbody.querySelectorAll('[data-prod-img]').forEach((btn) =>
+    btn.addEventListener('click', () => openProductModal(Number(btn.dataset.prodImg)))
+  );
   tbody.querySelectorAll('[data-prod-edit]').forEach((btn) =>
     btn.addEventListener('click', () => openProductModal(Number(btn.dataset.prodEdit)))
   );
@@ -1364,10 +1421,14 @@ function openProductModal(id = null) {
   const p = id ? productsState.items.find((x) => x.id === id) : null;
   document.getElementById('prod-modal-title').textContent = p ? `✏️ Editar: ${p.name}` : '＋ Nuevo producto';
   document.getElementById('prod-name').value = p ? p.name || '' : '';
+  document.getElementById('prod-cost').value = p ? p.cost || '' : '';
   document.getElementById('prod-price').value = p ? p.price || '' : '';
   document.getElementById('prod-stock').value = p ? p.stock || '' : '';
   document.getElementById('prod-desc').value = p ? p.description || '' : '';
   document.getElementById('prod-active').checked = p ? p.active === true : true;
+  const file = document.getElementById('prod-image-file');
+  if (file) file.value = '';
+  setProductImagePreview(p ? p.image_url || null : null);
   document.getElementById('modal-product').classList.remove('hidden');
   setTimeout(() => document.getElementById('prod-name').focus(), 50);
 }
@@ -1375,10 +1436,12 @@ function openProductModal(id = null) {
 async function saveProduct() {
   const body = {
     name: document.getElementById('prod-name').value.trim(),
+    cost: document.getElementById('prod-cost').value.trim(),
     price: document.getElementById('prod-price').value.trim(),
     stock: document.getElementById('prod-stock').value.trim(),
     description: document.getElementById('prod-desc').value.trim(),
     active: document.getElementById('prod-active').checked,
+    image_url: productsState.imageDraft || null,
   };
   if (!body.name) return alert('El nombre del producto es obligatorio');
   const btn = document.getElementById('prod-save');
@@ -1411,6 +1474,32 @@ async function saveProduct() {
   if (btnReload) btnReload.addEventListener('click', loadProducts);
   const btnSave = document.getElementById('prod-save');
   if (btnSave) btnSave.addEventListener('click', saveProduct);
+  const btnImgPick = document.getElementById('prod-image-pick');
+  const imgFile = document.getElementById('prod-image-file');
+  if (btnImgPick && imgFile) {
+    btnImgPick.addEventListener('click', () => imgFile.click());
+    imgFile.addEventListener('change', async () => {
+      const file = imgFile.files && imgFile.files[0];
+      if (!file) return;
+      btnImgPick.disabled = true;
+      const original = btnImgPick.textContent;
+      btnImgPick.textContent = 'Procesando...';
+      try {
+        setProductImagePreview(await readImageAsDataUrl(file));
+      } catch (err) {
+        alert(err.message || 'No se pudo cargar la imagen');
+        imgFile.value = '';
+      } finally {
+        btnImgPick.disabled = false;
+        btnImgPick.textContent = original;
+      }
+    });
+  }
+  const btnImgClear = document.getElementById('prod-image-clear');
+  if (btnImgClear) btnImgClear.addEventListener('click', () => {
+    if (imgFile) imgFile.value = '';
+    setProductImagePreview(null);
+  });
 })();
 
 // ---------------------------------------------------------------------

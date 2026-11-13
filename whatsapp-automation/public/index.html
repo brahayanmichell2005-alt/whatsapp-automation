@@ -385,7 +385,7 @@
               </div>
               <div class="table-wrap">
                 <table class="data-table" id="table-products">
-                  <thead><tr><th>Producto</th><th>Precio</th><th>Stock</th><th>Descripción</th><th>Estado</th><th>Acciones</th></tr></thead>
+                  <thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Precio costo</th><th>Precio venta</th><th>Stock</th><th>Descripción</th><th>Estado</th><th>Acciones</th></tr></thead>
                   <tbody></tbody>
                 </table>
               </div>
@@ -586,16 +586,29 @@
         <input type="text" id="prod-name" maxlength="150" placeholder="ej. Polo bordado azul talla M" />
         <div class="grid-3">
           <div>
-            <label class="field-label">Precio</label>
+            <label class="field-label">Precio de costo</label>
+            <input type="text" id="prod-cost" class="mono" maxlength="50" placeholder="S/ 28.00" />
+          </div>
+          <div>
+            <label class="field-label">Precio de venta</label>
             <input type="text" id="prod-price" class="mono" maxlength="50" placeholder="S/ 45.90" />
           </div>
           <div>
             <label class="field-label">Stock</label>
             <input type="text" id="prod-stock" maxlength="50" placeholder="12 unidades" />
           </div>
-          <div>
-            <label class="field-label">Estado</label>
-            <label class="crm-check" style="margin-top:6px"><input type="checkbox" id="prod-active" checked /> Activo</label>
+        </div>
+        <label class="crm-check" style="margin-top:10px"><input type="checkbox" id="prod-active" checked /> Activo (la IA lo menciona)</label>
+        <label class="field-label">Imagen del producto (miniatura)</label>
+        <div class="prod-img-pick">
+          <div class="prod-img-preview" id="prod-img-preview">
+            <span class="prod-img-empty">Sin imagen</span>
+          </div>
+          <div class="prod-img-actions">
+            <input type="file" id="prod-image-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            <button type="button" class="btn btn-secondary" id="prod-image-pick">📷 Elegir imagen</button>
+            <button type="button" class="btn btn-danger" id="prod-image-clear">Quitar imagen</button>
+            <span class="field-hint">JPG, PNG, WebP o GIF. Se guarda comprimida dentro del catálogo.</span>
           </div>
         </div>
         <label class="field-label">Descripción (la IA la usa para vender)</label>

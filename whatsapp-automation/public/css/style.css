@@ -587,6 +587,65 @@ select option { background: var(--surface); color: var(--text); }
 .mono-table td:nth-child(4) { font-family: var(--font-sans); }
 .data-table .btn { padding: 6px 12px; font-size: 0.7rem; }
 
+/* Catalogo: ID, miniatura y selector de imagen del producto */
+.data-table td.prod-id { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+.prod-thumb {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: block;
+}
+.prod-thumb-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px;
+  font-family: var(--font-sans);
+  font-size: 0.48rem;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.prod-thumb-add:hover { border-color: var(--emerald); color: var(--emerald); background: var(--hover); }
+.prod-thumb-plus { font-size: 0.9rem; line-height: 1; }
+
+.prod-img-pick { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.prod-img-preview {
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.prod-img-preview.has-img { border-style: solid; }
+.prod-img-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.prod-img-empty { font-size: 0.62rem; color: var(--muted-2); }
+.prod-img-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.prod-img-actions .field-hint { flex-basis: 100%; margin-top: 0; }
+
+/* En el modal del catalogo el checkbox no debe ocupar todo el ancho */
+.modal-body input[type='checkbox'] { width: auto; }
+.modal-body .crm-check { width: auto; align-self: flex-start; align-items: center; margin: 12px 0 0; }
+
+/* Las acciones del catalogo van en una sola linea para no alargar la fila */
+#table-products td:last-child { white-space: nowrap; }
+#table-products td:last-child .btn-row { flex-wrap: nowrap; gap: 6px; }
+#table-products td:last-child .btn { padding: 5px 9px; }
+#table-products td:nth-child(3) { min-width: 140px; }
+
 /* ------------------------------------------------------------------
    Campanas
    ------------------------------------------------------------------ */
@@ -1197,6 +1256,12 @@ html:not(.dark) .modal-overlay { background: rgba(15, 23, 42, 0.45); }
   --emerald: #059669;
   --emerald-dark: #047857;
 }
+
+/* Los titulos heredan el color del body oscuro; dentro de la zona blanca
+   deben usar el texto oscuro local para poder leerse. */
+.views h1,
+.views h2,
+.views h3 { color: var(--text); }
 
 /* ---------- Cajas de texto: relleno claro + sombreado plomo ---------- */
 .views input[type='text'],
