@@ -1147,6 +1147,130 @@ html:not(.dark) .modal-overlay { background: rgba(15, 23, 42, 0.45); }
 .ai-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ------------------------------------------------------------------
+   Voz de Nova: modo voz, modo continuo, ondas, reproductor y microfono.
+   Todo se apoya en el mismo chat; si el navegador no soporta la API de
+   voz, estas piezas quedan ocultas o deshabilitadas.
+   ------------------------------------------------------------------ */
+.ai-voice { border-top: 1px solid var(--border); background: var(--surface-2); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ai-voice-bar { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ai-voice-extra { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; flex-wrap: wrap; }
+.ai-voice-extra.hidden { display: none; }
+.ai-voice-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ai-voice-chip:hover { background: var(--hover); }
+.ai-voice-chip.on { background: var(--emerald-soft); border-color: var(--emerald); color: var(--emerald); }
+.ai-voice-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.ai-voice-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 0.7rem;
+  max-width: 150px;
+  min-width: 0;
+  cursor: pointer;
+}
+.ai-voice-live, .ai-voice-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  min-height: 36px;
+}
+.ai-voice-live { background: var(--emerald-soft); border: 1px solid rgba(16, 185, 129, 0.35); color: var(--text-2); }
+.ai-voice-live.aviso { background: var(--amber-soft); border-color: rgba(245, 158, 11, 0.45); }
+.ai-voice-player { background: var(--hover); border: 1px solid var(--border); }
+.ai-voice-live.hidden, .ai-voice-player.hidden { display: none; }
+.ai-voice-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-voice-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-voice-btn:hover { background: var(--hover); color: var(--text); }
+.ai-voice-btn.hidden { display: none; }
+
+/* Ondas: solo se animan mientras escucha o habla */
+.ai-wave { display: inline-flex; align-items: center; gap: 2px; height: 20px; flex-shrink: 0; }
+.ai-wave span {
+  display: block;
+  width: 3px;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--emerald);
+  opacity: 0.55;
+  animation: ai-wavebar 1s ease-in-out infinite;
+}
+.ai-wave span:nth-child(2) { animation-delay: 0.12s; }
+.ai-wave span:nth-child(3) { animation-delay: 0.24s; }
+.ai-wave span:nth-child(4) { animation-delay: 0.36s; }
+.ai-wave span:nth-child(5) { animation-delay: 0.48s; }
+.ai-voice-live.aviso .ai-wave span { background: var(--amber); animation-play-state: paused; height: 6px; }
+.ai-wave.playing span { background: var(--emerald-dark); }
+@keyframes ai-wavebar { 0%, 100% { height: 5px; opacity: 0.5; } 50% { height: 16px; opacity: 1; } }
+
+/* Boton del microfono dentro de la fila de escritura */
+.ai-mic {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.ai-mic:hover { background: var(--hover); }
+.ai-mic.active {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+  animation: ai-mic-pulse 1.4s ease-out infinite;
+}
+.ai-mic-off { opacity: 0.45; }
+@keyframes ai-mic-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(220, 38, 38, 0); }
+}
+
+/* El boton flotante avisa cuando el microfono esta escuchando */
+#ai-widget.ai-listening .ai-fab { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35), 0 8px 24px rgba(16, 185, 129, 0.45); }
+#ai-widget.ai-speaking .ai-fab-ring { animation-duration: 1.4s; }
+
+@media (max-width: 480px) {
+  .ai-voice { padding: 7px 9px; gap: 6px; }
+  .ai-voice-select { max-width: 96px; }
+  .ai-voice-text { font-size: 0.7rem; }
+  .ai-mic { width: 36px; height: 36px; }
+}
+
+/* ------------------------------------------------------------------
    Responsive
    ------------------------------------------------------------------ */
 @media (max-width: 1023px) {

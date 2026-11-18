@@ -75,6 +75,7 @@ const CASES = {
     updateClassification: [[1, { interestType: 'PRODUCTO', interestLevel: 'ALTO' }]],
     touchLastMessage: [[1]],
     list: [[{ limit: 10, offset: 0 }], [undefined]],
+    search: [['Ana'], ['51999000111', 5]],
     listByIds: [[[1, 2]]],
     update: [[1, { name: 'Ana', status: 'BLOCKED', interest_type: 'SERVICIO', evil: 'x' }], [1, {}]],
     remove: [[1]],
@@ -271,6 +272,12 @@ describe('Comportamiento de los modelos', () => {
     assert.equal(await lock.acquire('x', 60), true);
     fakePg.handler = async () => ({ rows: [], rowCount: 0 });
     assert.equal(await lock.acquire('x', 60), false);
+  });
+
+  test('customer.search ignora textos muy cortos sin consultar la base', async () => {
+    const rows = await load('models/customer.model.js').search('.');
+    assert.deepEqual(rows, []);
+    assert.equal(fakePg.calls.length, 0);
   });
 
   test('customer.update solo permite columnas de la lista blanca', async () => {

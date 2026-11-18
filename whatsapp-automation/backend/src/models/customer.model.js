@@ -133,6 +133,47 @@ async function list({ limit = 50, offset = 0 } = {}) {
   return rows;
 }
 
+// Busqueda liviana para el asistente (chat del panel): nombre o telefono.
+// Devuelve solo lo necesario para responder, sin exponer toda la ficha.
+async function search(text, limit = 5) {
+  const clean = String(text || '').trim().slice(0, 80);
+  if (clean.length < 2) return [];
+  const palabras = clean
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3)
+    .slice(0, 4);
+  const digits = clean.replace(/\D/g, '');
+  const conditions = [];
+  const params = [];
+  palabras.forEach((w) => {
+    params.push(`%${w}%`);
+    conditions.push(`name ILIKE $${params.length}`);
+  });
+  if (digits.length >= 3) {
+    params.push(`%${digits}%`);
+    conditions.push(`phone ILIKE $${params.length}`);
+  }
+  if (!conditions.length) return [];
+  const top = Math.min(Math.max(Number(limit) || 5, 1), 10);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, phone, status, interest_type, interest_level, funnel_stage, last_message_at
+         FROM customers
+        WHERE ${conditions.join(' OR ')}
+        ORDER BY last_message_at DESC NULLS LAST, id DESC
+        LIMIT ${top}`,
+      params
+    );
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
 // Varios clientes por id (para audiencias de campana por lista manual).
 async function listByIds(ids) {
   const clean = (ids || []).map(Number).filter(Number.isFinite);
@@ -175,6 +216,7 @@ module.exports = {
   updateClassification,
   touchLastMessage,
   list,
+  search,
   listByIds,
   update,
   remove,

@@ -298,9 +298,11 @@
     const attachment = state.attachment;
     state.attachment = null;
 
-    await ask({ message: text || '(analiza el archivo adjunto)', history: state.history.slice(-MAX_STORED), attachment });
+    return ask({ message: text || '(analiza el archivo adjunto)', history: state.history.slice(-MAX_STORED), attachment });
   }
 
+  // Devuelve el texto de la respuesta (o null si hubo error) para que la capa
+  // de voz pueda leerla en alto. El historial y la UI siguen viviendo aqui.
   async function ask(payload) {
     setBusy(true);
     showTyping(true);
@@ -318,19 +320,50 @@
       // Accion sensible propuesta por la IA: NUNCA ejecutada sola.
       if (r.pendingAction) showConfirm(r.pendingAction);
       if (!state.open) el.fabDot.classList.remove('hidden');
+      return reply;
     } catch (err) {
-      bubble(
-        'assistant',
-        `⚠️ ${err.message || 'No pude contactar al servidor. Revisa tu conexion e intenta de nuevo.'}`,
-        true
-      );
+      const message = err.message || 'No pude contactar al servidor. Revisa tu conexion e intenta de nuevo.';
+      bubble('assistant', `⚠️ ${message}`, true);
       if (!state.open) el.fabDot.classList.remove('hidden');
+      return { error: message };
     } finally {
       showTyping(false);
       setBusy(false);
-      el.input.focus();
+      // En modo voz no se enfoca el campo: en movil abriria el teclado solo.
+      if (payload.voice !== true && document.activeElement !== el.input) el.input.focus();
     }
   }
+
+  // ----------------------------------------------------------------
+  // Puente para la capa de voz (js/voice.js). Reutiliza exactamente el
+  // mismo endpoint, el mismo historial y las mismas acciones pendientes:
+  // no hay un segundo asistente ni una segunda logica de IA.
+  // ----------------------------------------------------------------
+  window.NovaChat = {
+    isOpen: () => state.open,
+    isBusy: () => state.busy,
+    open: () => setOpen(true, false),
+    close: () => setOpen(false, false),
+    setStatus: (text) => {
+      if (el.status) el.status.textContent = text || 'Asistente del panel';
+    },
+    // Envia un texto como si el usuario lo hubiera escrito. Devuelve la
+    // respuesta (string) o { error } si algo fallo.
+    send: async (text, options = {}) => {
+      const clean = String(text || '').trim();
+      if (!clean) return { error: 'Mensaje vacio' };
+      if (state.busy) return { error: 'Nova todavia esta respondiendo' };
+      if (!state.open) setOpen(true, false);
+      state.history.push({ role: 'user', content: clean });
+      bubble('user', clean);
+      saveHistory();
+      return ask({
+        message: clean,
+        history: state.history.slice(-MAX_STORED),
+        voice: options.voice === true,
+      });
+    },
+  };
 
   // Barra de confirmacion para el envio de WhatsApp propuesto por la IA.
   function showConfirm(action) {
