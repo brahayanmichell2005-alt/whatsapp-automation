@@ -520,6 +520,32 @@ function chatMediaUrl(m, download = false) {
   return `${API_BASE}/api/messages/${m.id}/media?token=${encodeURIComponent(getAuthToken())}&v=${MEDIA_VER}${download ? '&download=1' : ''}`;
 }
 
+// Nombre de archivo legible al descargar: cliente + fecha + tipo + id.
+// El nombre viaja en el atributo download (mismo origen) y el backend pone
+// ademas su propio Content-Disposition.
+const MEDIA_EXT = { IMAGE: 'jpg', VIDEO: 'mp4', AUDIO: 'ogg' };
+function chatMediaName(m, kind) {
+  const conv = (chatState.conversations || []).find((c) => Number(c.id) === Number(m.conversation_id));
+  const cliente =
+    String((conv && (conv.customer_name || conv.customer_phone)) || 'cliente')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\w-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'cliente';
+  const fecha = String(m.created_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const ext = MEDIA_EXT[kind] || '';
+  return `${cliente}-${fecha}-${String(kind).toLowerCase()}-${m.id}${ext ? '.' + ext : ''}`;
+}
+
+// Los archivos de mas de 16 MB no se guardan en la base (solo CDN): se avisa
+// para que el operador los descargue antes de que venza el enlace.
+function mediaSizeHint(m) {
+  const bytes = Number((m.media_meta && m.media_meta.fileLength) || 0);
+  if (!bytes || bytes <= 16 * 1024 * 1024) return '';
+  return '<div class="media-hint">Archivo grande: descárgalo ahora, el enlace de WhatsApp puede caducar.</div>';
+}
+
 function chatBubbleParts(m) {
   let texto = String(m.content || '');
   let etiqueta = null;
@@ -536,26 +562,51 @@ function chatBubbleParts(m) {
     VIDEO: '🎬 Video',
     DOCUMENT: '📄 Documento',
     LOCATION: '📍 Ubicación',
+    VIEW_ONCE: '🔒 Ver una vez',
   };
   const kind = m.media_kind || m.message_type;
   return { etiqueta, texto, tipo: tipoLabel[kind] || (m.media_url ? '📎 Archivo' : null), kind };
 }
 
+// "Ver una vez": no hay archivo guardado (ni se descarga). La tarjeta avisa
+// y ofrece pedir el reenvio como mensaje normal; nunca se envia sola.
+const VIEW_ONCE_NOUNS = {
+  AUDIO: 'nota de voz',
+  IMAGE: 'imagen',
+  VIDEO: 'video',
+  DOCUMENT: 'archivo',
+  OTHER: 'archivo',
+};
+
 // Burbuja con multimedia inline: imagen (con zoom al clic), sticker pequeno
-// sin fondo, audio con descarga alternativa, video y documento. Todo pasa
-// por /media autenticado: nada queda expuesto.
+// sin fondo, audio/video con descarga, video y documento. Todo pasa por
+// /media autenticado: nada queda expuesto.
 function chatBubbleMedia(m, kind) {
+  if (kind === 'VIEW_ONCE') {
+    const subtype = (m.media_meta && m.media_meta.subtype) || 'OTHER';
+    const noun = VIEW_ONCE_NOUNS[subtype] || VIEW_ONCE_NOUNS.OTHER;
+    const titulo = noun.charAt(0).toUpperCase() + noun.slice(1);
+    return `<div class="bubble-viewonce">
+      <div class="bubble-viewonce-title">🔒 ${esc(titulo)} «ver una vez»</div>
+      <div class="bubble-viewonce-note">Por privacidad no se guarda ni se puede volver a abrir. Pídele al cliente que lo reenvíe como mensaje normal.</div>
+      <button type="button" class="bubble-viewonce-btn" data-ask-resend data-subtype="${esc(subtype)}">Pedir reenvío</button>
+    </div>`;
+  }
   if (!m.media_url || !m.media_key) return '';
   if (kind === 'IMAGE' || kind === 'STICKER') {
     const cls = kind === 'STICKER' ? ' bubble-img sticker' : ' bubble-img';
     const zoom = kind === 'IMAGE' ? ' data-zoom="1"' : '';
-    return `<div class="media-wrap"><span class="media-load" aria-hidden="true"></span><img class="${cls}" loading="lazy" src="${chatMediaUrl(m)}" alt="multimedia"${zoom} /></div>`;
+    const dl =
+      kind === 'IMAGE'
+        ? `<a class="media-dl media-dl-float" href="${chatMediaUrl(m, true)}" download="${esc(chatMediaName(m, kind))}" title="Descargar imagen">&#11015;&#65039;</a>`
+        : '';
+    return `<div class="media-wrap"><span class="media-load" aria-hidden="true"></span><img class="${cls}" loading="lazy" src="${chatMediaUrl(m)}" alt="multimedia"${zoom} />${dl}</div>${mediaSizeHint(m)}`;
   }
   if (kind === 'AUDIO') {
-    return `<div class="bubble-audio-wrap"><audio controls preload="metadata" class="bubble-audio" src="${chatMediaUrl(m)}"></audio><a class="media-dl" href="${chatMediaUrl(m, true)}" download title="Descargar audio">&#11015;&#65039;</a></div>`;
+    return `<div class="bubble-audio-wrap"><audio controls preload="metadata" class="bubble-audio" src="${chatMediaUrl(m)}"></audio><a class="media-dl" href="${chatMediaUrl(m, true)}" download="${esc(chatMediaName(m, kind))}" title="Descargar audio">&#11015;&#65039;</a></div>`;
   }
   if (kind === 'VIDEO') {
-    return `<div class="media-wrap"><span class="media-load" aria-hidden="true"></span><video controls preload="metadata" class="bubble-video" src="${chatMediaUrl(m)}"></video></div>`;
+    return `<div class="media-wrap"><span class="media-load" aria-hidden="true"></span><video controls preload="metadata" class="bubble-video" src="${chatMediaUrl(m)}"></video><a class="media-dl media-dl-float" href="${chatMediaUrl(m, true)}" download="${esc(chatMediaName(m, kind))}" title="Descargar video">&#11015;&#65039;</a></div>${mediaSizeHint(m)}`;
   }
   if (kind === 'DOCUMENT') {
     const nombre = (m.media_meta && m.media_meta.fileName) || 'documento';
@@ -570,7 +621,7 @@ function chatBubbleHtml(m) {
   const parts = [];
   const mediaHtml = chatBubbleMedia(m, kind);
   if (mediaHtml) parts.push(mediaHtml);
-  if (tipo && kind !== 'IMAGE' && kind !== 'STICKER' && kind !== 'AUDIO' && kind !== 'DOCUMENT') {
+  if (tipo && kind !== 'IMAGE' && kind !== 'STICKER' && kind !== 'AUDIO' && kind !== 'DOCUMENT' && kind !== 'VIEW_ONCE') {
     parts.push(`<div class="bubble-type">${esc(tipo)}</div>`);
   } else if (etiqueta) {
     parts.push(`<div class="bubble-type">${esc(etiqueta)}</div>`);
@@ -746,11 +797,28 @@ function openMediaLightbox(src) {
   box.hidden = false;
 }
 
+// Peticion de reenvio para un "ver una vez": solo prepara el texto.
+function askResend(subtype) {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  const noun = VIEW_ONCE_NOUNS[subtype] || VIEW_ONCE_NOUNS.OTHER;
+  input.value = `Hola, me llegó tu ${noun} como «ver una vez» y por privacidad no se guarda aquí. ¿Me lo puedes reenviar como mensaje normal, por favor? Así queda en tu historial y lo reviso sin problema.`;
+  input.focus();
+  input.dispatchEvent(new Event('input'));
+}
+
 function bindBubbleActions(container) {
   container.querySelectorAll('[data-del-msg]').forEach((btn) => {
     if (btn.dataset.bound) return;
     btn.dataset.bound = '1';
     btn.addEventListener('click', () => deleteMessage(Number(btn.dataset.delMsg)));
+  });
+  // "Ver una vez": rellena el compositor con la peticion de reenvio. No se
+  // envia sola: el operador revisa el texto y decide.
+  container.querySelectorAll('[data-ask-resend]').forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => askResend(btn.dataset.subtype));
   });
   // Multimedia: indicador de carga, fallo claro con descarga alternativa y
   // ampliacion de imagenes. load/error no burbujean: se engancha directo.

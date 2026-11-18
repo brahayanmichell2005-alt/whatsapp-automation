@@ -879,6 +879,32 @@ html:not(.dark) .chat-row.in .bubble-type { border-color: rgba(0, 0, 0, 0.08); }
 }
 .media-dl:hover { filter: brightness(1.1); }
 .media-dl-fail { color: var(--amber); background: var(--amber-soft); cursor: default; }
+
+/* Descarga flotante sobre imagen/video (visible al pasar el mouse) */
+.media-dl-float {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  padding: 3px 6px; border-radius: 8px; font-size: 0.72rem;
+  color: #fff; background: rgba(2, 6, 12, 0.65); border-color: transparent;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.media-wrap:hover .media-dl-float, .media-dl-float:focus-visible { opacity: 1; }
+@media (hover: none) { .media-dl-float { opacity: 1; } }
+.media-hint { font-size: 0.6rem; line-height: 1.35; color: var(--amber); margin: -2px 0 4px; max-width: 240px; }
+
+/* Mensaje "ver una vez": solo aviso, sin contenido guardado */
+.bubble-viewonce {
+  max-width: 260px; margin-bottom: 4px; padding: 10px;
+  border: 1px dashed var(--amber); border-radius: 10px;
+  background: var(--amber-soft);
+}
+.bubble-viewonce-title { font-size: 0.72rem; font-weight: 700; color: var(--amber); margin-bottom: 4px; }
+.bubble-viewonce-note { font-size: 0.66rem; line-height: 1.45; color: var(--text-2); margin-bottom: 8px; }
+.bubble-viewonce-btn {
+  font-size: 0.66rem; font-weight: 700; cursor: pointer;
+  color: var(--text-2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px;
+}
+.bubble-viewonce-btn:hover { border-color: var(--amber); }
 .bubble-file {
   display: inline-flex; align-items: center; gap: 8px; max-width: 240px;
   font-size: 0.72rem; font-weight: 700; text-decoration: none;

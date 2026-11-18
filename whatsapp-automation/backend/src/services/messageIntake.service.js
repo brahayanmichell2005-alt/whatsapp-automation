@@ -31,6 +31,9 @@ async function handleInboundMessage(parsedEvent) {
   const { phone, pushName, externalMessageId, messageType, isGroup, fromMe, remoteJid } =
     parsedEvent;
   let { content } = parsedEvent;
+  // "Ver una vez": el parser ya lo detecto y no trae media. Aqui solo se
+  // registra el aviso; no se descarga, no se descifra y no se guarda nada.
+  const viewOnce = parsedEvent.viewOnce || null;
 
   if (isGroup) {
     // El sistema esta orientado a atencion 1:1 con clientes; los mensajes
@@ -71,7 +74,7 @@ async function handleInboundMessage(parsedEvent) {
   // (media_data), asi el panel puede volver a verlo cuando la URL del CDN de
   // WhatsApp ya vencio. VIDEO/DOCUMENT se descifran solo para guardarlos.
   let storedMedia = null;
-  if (parsedEvent.media) {
+  if (!viewOnce && parsedEvent.media) {
     storedMedia = await mediaService.decryptMedia(parsedEvent.media);
     if (['AUDIO', 'IMAGE', 'STICKER'].includes(parsedEvent.media.kind)) {
       const understood = await understandIncomingMedia(parsedEvent.media, customer, storedMedia ? storedMedia.buffer : null);
@@ -81,22 +84,41 @@ async function handleInboundMessage(parsedEvent) {
     }
   }
 
+  // Para "ver una vez" solo se guarda el tipo y una marca; nunca la URL, la
+  // llave ni los bytes. media_kind = VIEW_ONCE permite que la UI muestre el
+  // aviso correcto sin migrar el CHECK de message_type.
+  let mediaMeta = null;
+  if (viewOnce) {
+    mediaMeta = {
+      viewOnce: true,
+      subtype: viewOnce.subtype || 'OTHER',
+      wrapper: viewOnce.wrapper || null,
+    };
+  } else if (
+    parsedEvent.media &&
+    (parsedEvent.media.seconds || parsedEvent.media.fileName || parsedEvent.media.fileLength)
+  ) {
+    mediaMeta = {
+      seconds: parsedEvent.media.seconds || null,
+      fileName: parsedEvent.media.fileName || null,
+      fileLength: parsedEvent.media.fileLength || null,
+    };
+  }
+
   const message = await messageModel.create({
     conversationId: conversation.id,
     customerId: customer.id,
     direction: 'INBOUND',
-    messageType,
-    content,
+    messageType: viewOnce ? 'OTHER' : messageType,
+    content: viewOnce ? null : content,
     externalMessageId,
     status: 'DELIVERED',
     // URL/llave del archivo cifrado (fallback si el CDN sigue vigente) +
     // bytes descifrados guardados en llegada + datos para la UI.
-    media: parsedEvent.media || null,
+    media: viewOnce ? null : parsedEvent.media || null,
+    mediaKind: viewOnce ? 'VIEW_ONCE' : null,
     mediaData: storedMedia ? storedMedia.buffer : null,
-    mediaMeta:
-      parsedEvent.media && (parsedEvent.media.seconds || parsedEvent.media.fileName)
-        ? { seconds: parsedEvent.media.seconds || null, fileName: parsedEvent.media.fileName || null }
-        : null,
+    mediaMeta,
   });
 
   await conversationModel.touchLastMessage(conversation.id);
@@ -114,8 +136,22 @@ async function handleInboundMessage(parsedEvent) {
     metadata: { customerId: customer.id, conversationId: conversation.id, messageId: message.id },
   });
 
+  if (viewOnce) {
+    await logModel.record({
+      eventType: 'view_once_received',
+      level: 'INFO',
+      message: `Mensaje "ver una vez" (${mediaMeta.subtype}) de ${phone}: no se descarga ni se guarda por privacidad`,
+      metadata: {
+        customerId: customer.id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        subtype: mediaMeta.subtype,
+      },
+    });
+  }
+
   // ---- Seccion 6, pasos 11-13: reglas / IA y creacion de la respuesta ----
-  await processAutomatedReply({ customer, conversation, content, prefs });
+  await processAutomatedReply({ customer, conversation, content, prefs, viewOnce });
 
   return { skipped: false, customer, conversation, message };
 }
@@ -175,11 +211,46 @@ async function understandIncomingMedia(media, customer, decryptBuffer = null) {
   }
 }
 
+// Texto que se envia al cliente cuando manda un "ver una vez". Se le pide
+// reenviarlo como mensaje normal: es la unica via legitima de conservarlo.
+const VIEW_ONCE_NOUNS = {
+  AUDIO: 'nota de voz',
+  IMAGE: 'imagen',
+  VIDEO: 'video',
+  DOCUMENT: 'archivo',
+  OTHER: 'archivo',
+};
+
+function buildViewOnceReply(customerName, subtype) {
+  const noun = VIEW_ONCE_NOUNS[subtype] || VIEW_ONCE_NOUNS.OTHER;
+  const saludo = customerName ? `Hola ${customerName}` : 'Hola';
+  return `${saludo}, me llegó tu ${noun} como «ver una vez». Por privacidad no se guarda en el sistema, así que no puedo revisar ese contenido. ¿Me lo puedes reenviar como mensaje normal? Así queda en tu historial y lo atiendo sin problema. 🙏`;
+}
+
+// Encola una respuesta y dispara el envio inmediato (mismo mecanismo que la
+// IA). Se usa para avisos que no dependen del clasificador.
+async function sendImmediateReply({ customer, conversation, reply, eventType, logMessage, metadata = null }) {
+  await queueModel.cancelPendingByCustomer(customer.id);
+  await queueModel.enqueue({ customerId: customer.id, phone: customer.phone, message: reply });
+  await logModel.record({
+    eventType,
+    level: 'INFO',
+    message: logMessage,
+    metadata: { customerId: customer.id, conversationId: conversation.id, ...(metadata || {}) },
+  });
+  try {
+    const worker = require('../workers/message.worker');
+    await worker.tick({ budgetMs: 20000 });
+  } catch (err) {
+    logger.error({ err: err.message }, 'No se pudo ejecutar el worker tras un aviso automatico');
+  }
+}
+
 // Procesa comandos de opt-in/opt-out, clasifica el mensaje (IA si esta
 // activada, con fallback al motor de reglas) y encola una respuesta
 // automatica, respetando el opt-out del cliente (Seccion 15-16, 23-24).
 // El envio real de lo encolado ocurre en el worker de la Entrega 6.
-async function processAutomatedReply({ customer, conversation, content, prefs = null, preface = null }) {
+async function processAutomatedReply({ customer, conversation, content, prefs = null, preface = null, viewOnce = null }) {
   // Atencion humana (Seccion 8 modos): si el operador tomo el control de esta
   // conversacion, la IA no responde automaticamente (evita que el bot y el
   // operador manden respuestas contradictorias).
@@ -284,6 +355,22 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
     return;
   }
 
+  // "Ver una vez": no se guardo el archivo (por privacidad), asi que se le
+  // pide al cliente que lo reenvie como mensaje normal. Nunca se usa el
+  // mensaje generico de "no pude abrir": aqui si sabemos que paso.
+  if (viewOnce) {
+    const reply = buildViewOnceReply(customer.name, viewOnce.subtype);
+    await sendImmediateReply({
+      customer,
+      conversation,
+      reply,
+      eventType: 'view_once_reply_queued',
+      logMessage: `Aviso de "ver una vez" encolado para ${customer.phone} (tipo: ${viewOnce.subtype || 'OTHER'})`,
+      metadata: { subtype: viewOnce.subtype || 'OTHER' },
+    });
+    return { skipped: false, customer, conversation };
+  }
+
   // La clasificacion por IA agregaba otra llamada (y mas latencia) antes de
   // redactar la respuesta. El motor de reglas ya distingue PRODUCTO /
   // SERVICIO / INDECISO, asi que se usa directamente y la IA se reserva para
@@ -293,21 +380,13 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   const text = String(content || '').trim();
   if (!text) {
     const noTextReply = `${customer.name ? `Hola ${customer.name}` : 'Hola'}, no pude abrir bien lo que me mandaste; ¿me lo puedes escribir por aquí, por favor? 🙏`;
-    await queueModel.cancelPendingByCustomer(customer.id);
-    await queueModel.enqueue({ customerId: customer.id, phone: customer.phone, message: noTextReply });
-    await logModel.record({
+    await sendImmediateReply({
+      customer,
+      conversation,
+      reply: noTextReply,
       eventType: 'auto_reply_queued',
-      level: 'INFO',
-      message: `Respuesta automatica encolada para ${customer.phone} (mensaje sin texto, origen: NON_TEXT)`,
-      metadata: { customerId: customer.id, conversationId: conversation.id },
+      logMessage: `Respuesta automatica encolada para ${customer.phone} (mensaje sin texto, origen: NON_TEXT)`,
     });
-    // Envio instantaneo (mismo mecanismo que las respuestas de la IA).
-    try {
-      const worker = require('../workers/message.worker');
-      await worker.tick({ budgetMs: 20000 });
-    } catch (err) {
-      logger.error({ err: err.message }, 'No se pudo ejecutar el worker tras un mensaje sin texto');
-    }
     return { skipped: false, customer, conversation };
   }
 
@@ -485,4 +564,4 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   }
 }
 
-module.exports = { handleInboundMessage };
+module.exports = { handleInboundMessage, buildViewOnceReply };

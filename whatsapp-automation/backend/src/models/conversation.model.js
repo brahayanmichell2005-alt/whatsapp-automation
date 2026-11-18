@@ -78,8 +78,11 @@ async function listForChat({ limit = 50, offset = 0 } = {}) {
     `SELECT conv.*, c.name AS customer_name, c.phone AS customer_phone,
             c.funnel_stage AS customer_funnel_stage, c.notes AS customer_notes,
             c.ai_paused AS customer_ai_paused,
-            (SELECT content FROM messages WHERE conversation_id = conv.id
-              ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message_preview
+            (SELECT CASE WHEN m.media_kind = 'VIEW_ONCE'
+                         THEN '🔒 Ver una vez (no guardado)'
+                         ELSE m.content END
+               FROM messages m WHERE m.conversation_id = conv.id
+              ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_message_preview
      FROM conversations conv
      LEFT JOIN customers c ON c.id = conv.customer_id
      ORDER BY conv.pinned DESC, conv.last_message_at DESC NULLS LAST, conv.id DESC

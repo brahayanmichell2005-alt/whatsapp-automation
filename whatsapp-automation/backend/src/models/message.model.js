@@ -47,11 +47,14 @@ async function create({
   status = 'PENDING',
   media = null,
   mediaData = null,
+  mediaKind = null,
   mediaMeta = null,
 }) {
   // STICKER viola el CHECK de la BD (solo acepta tipos conocidos): se guarda
-  // como OTHER y media_kind conserva el tipo real para la UI.
-  const dbMessageType = media && media.kind === 'STICKER' ? 'OTHER' : messageType;
+  // como OTHER y media_kind conserva el tipo real para la UI. VIEW_ONCE usa
+  // el mismo mecanismo: message_type OTHER + media_kind VIEW_ONCE, sin bytes.
+  const kind = mediaKind || (media ? media.kind : null);
+  const dbMessageType = kind === 'STICKER' ? 'OTHER' : messageType;
   const bytes =
     Buffer.isBuffer(mediaData) && mediaData.length > 0 && mediaData.length <= MAX_MEDIA_BYTES
       ? mediaData
@@ -73,7 +76,7 @@ async function create({
       media ? media.url : null,
       media ? media.mediaKey : null,
       media ? media.mimetype : null,
-      media ? media.kind : null,
+      kind,
       bytes,
       mediaMeta || null,
     ]

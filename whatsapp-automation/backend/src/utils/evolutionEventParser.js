@@ -51,6 +51,52 @@ function extractTextContent(message) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Mensajes de "ver una vez"
+// ---------------------------------------------------------------------------
+// WhatsApp los entrega dentro de un sobre (viewOnceMessage / V2 / V2Extension)
+// y a veces dentro de otro sobre (ephemeralMessage) si el chat usa mensajes
+// temporales. Se detecta el sobre SIN abrir su contenido: el sistema no
+// descarga, no descifra y no guarda el archivo, porque "ver una vez" es una
+// promesa de privacidad del cliente. Solo se registra que llego.
+const VIEW_ONCE_WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+const TRANSPARENT_WRAPPERS = ['ephemeralMessage', 'documentWithCaptionMessage'];
+const MEDIA_KINDS = [
+  ['IMAGE', 'imageMessage'],
+  ['VIDEO', 'videoMessage'],
+  ['AUDIO', 'audioMessage'],
+  ['DOCUMENT', 'documentMessage'],
+];
+
+function viewOnceKind(inner) {
+  if (!inner || typeof inner !== 'object') return 'OTHER';
+  for (const [kind, key] of MEDIA_KINDS) {
+    if (inner[key]) return kind;
+  }
+  return 'OTHER';
+}
+
+// Devuelve { subtype, wrapper } si el mensaje es de "ver una vez", o null.
+// `subtype` solo describe el tipo (IMAGEN/VIDEO/AUDIO); nunca incluye la URL,
+// la mediaKey ni el contenido.
+function findViewOnce(message) {
+  let current = message;
+  for (let i = 0; i < 5 && current && typeof current === 'object'; i += 1) {
+    const wrapper = VIEW_ONCE_WRAPPERS.find((key) => current[key]);
+    if (wrapper) {
+      const inner = current[wrapper] && current[wrapper].message ? current[wrapper].message : current[wrapper];
+      return { subtype: viewOnceKind(inner), wrapper };
+    }
+    // Algunos payloads no traen sobre y solo marcan el archivo con viewOnce.
+    const direct = MEDIA_KINDS.find(([, key]) => current[key] && current[key].viewOnce === true);
+    if (direct) return { subtype: direct[0], wrapper: null };
+    const next = TRANSPARENT_WRAPPERS.map((key) => current[key] && current[key].message).find(Boolean);
+    if (!next) break;
+    current = next;
+  }
+  return null;
+}
+
 // Normaliza un evento "messages.upsert" a un objeto simple y estable
 // que el resto del sistema puede consumir sin conocer el formato de Baileys.
 function parseMessageUpsert(payload) {
@@ -82,6 +128,8 @@ function parseMessageUpsert(payload) {
   const fromMe = Boolean(entry.key?.fromMe);
   const externalMessageId = entry.key?.id || null;
   const message = entry.message || null;
+  // "Ver una vez": se anota el tipo, pero jamas se extrae la media.
+  const viewOnce = findViewOnce(message);
 
   return {
     fromMe,
@@ -92,11 +140,12 @@ function parseMessageUpsert(payload) {
     remoteJid: isLid && !phoneJid ? primaryJid : null,
     pushName: entry.pushName || null,
     externalMessageId,
-    messageType: detectMessageType(message),
-    content: extractTextContent(message),
+    messageType: viewOnce ? 'OTHER' : detectMessageType(message),
+    content: viewOnce ? null : extractTextContent(message),
     // Informacion del archivo adjunto (nota de voz, imagen, sticker...):
     // url cifrada del CDN + mediaKey para descifrarlo en el sistema.
-    media: extractMedia(message),
+    media: viewOnce ? null : extractMedia(message),
+    viewOnce,
     timestamp: entry.messageTimestamp || null,
   };
 }
@@ -116,6 +165,7 @@ module.exports = {
   isGroupJid,
   detectMessageType,
   extractTextContent,
+  findViewOnce,
   parseMessageUpsert,
   parseConnectionUpdate,
 };

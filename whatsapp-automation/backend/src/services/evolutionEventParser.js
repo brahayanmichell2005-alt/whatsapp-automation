@@ -58,6 +58,12 @@ const WRAPPERS = [
   'documentWithCaptionMessage',
 ];
 
+// "Ver una vez": este parser NO debe guardar su contenido. La app activa usa
+// utils/evolutionEventParser, que solo avisa; esta guarda protege a este
+// parser heredado si alguna vez se vuelve a conectar.
+const VIEW_ONCE_WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+const VIEW_ONCE_MEDIA_KEYS = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'];
+
 // Claves que acompanan a los mensajes pero no son contenido.
 const NOISE_KEYS = ['messageContextInfo', 'senderKeyDistributionMessage'];
 
@@ -79,6 +85,16 @@ function unwrapMessage(message) {
   return current;
 }
 
+function hasViewOnce(message) {
+  let current = message;
+  for (let i = 0; i < 5 && current && typeof current === 'object'; i += 1) {
+    if (VIEW_ONCE_WRAPPERS.some((key) => current[key])) return true;
+    if (VIEW_ONCE_MEDIA_KEYS.some((key) => current[key] && current[key].viewOnce === true)) return true;
+    current = current.ephemeralMessage?.message || current.documentWithCaptionMessage?.message;
+  }
+  return false;
+}
+
 function clip(text) {
   return typeof text === 'string' ? text.slice(0, MAX_CONTENT_LENGTH) : null;
 }
@@ -97,6 +113,7 @@ function describeLocation(loc) {
 // messageType usa los valores del ENUM de messages.message_type.
 function extractContent(rawMessage) {
   if (!rawMessage || typeof rawMessage !== 'object') return { ignored: 'empty_message' };
+  if (hasViewOnce(rawMessage)) return { ignored: 'view_once' };
 
   const m = unwrapMessage(rawMessage);
   if (!m || typeof m !== 'object') return { ignored: 'empty_message' };

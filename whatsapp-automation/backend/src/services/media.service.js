@@ -41,6 +41,21 @@ function normalizeMediaKey(mediaKey) {
   return String(mediaKey);
 }
 
+// fileLength puede llegar como numero, string o Long de protobuf.
+// Devuelve bytes (numero) o null si no se puede interpretar.
+function normalizeFileLength(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === 'string') return /^\d+$/.test(value) ? Number(value) : null;
+  if (typeof value === 'object' && 'low' in value) {
+    const low = Number(value.low);
+    const high = Number(value.high) || 0;
+    if (!Number.isFinite(low)) return null;
+    return high * 4294967296 + (low >>> 0);
+  }
+  return null;
+}
+
 // Extrae la informacion de media de un mensaje crudo de Baileys/Evolution.
 // Devuelve null si el mensaje no trae archivo descargable.
 function extractMedia(rawMessage) {
@@ -54,6 +69,10 @@ function extractMedia(rawMessage) {
   ];
   for (const [kind, m] of candidatos) {
     if (!m) continue;
+    // "Ver una vez": NUNCA se descarga ni se descifra. El parser lo detecta
+    // antes y solo avisa al operador; esta guarda evita que un llamador
+    // futuro lo trate como archivo normal.
+    if (m.viewOnce === true) return null;
     const url = m.url || null;
     const mediaKey = normalizeMediaKey(m.mediakey || m.mediaKey || null);
     if (!url || !mediaKey) return null;
@@ -64,6 +83,7 @@ function extractMedia(rawMessage) {
       mimetype: m.mimetype || (kind === 'AUDIO' ? 'audio/ogg' : kind === 'STICKER' ? 'image/webp' : null),
       seconds: m.seconds || null,
       fileName: m.fileName || m.filename || null,
+      fileLength: normalizeFileLength(m.fileLength),
     };
   }
   return null;

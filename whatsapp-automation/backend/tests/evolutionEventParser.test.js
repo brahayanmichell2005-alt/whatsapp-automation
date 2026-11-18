@@ -63,8 +63,34 @@ describe('evolutionEventParser', () => {
       externalMessageId: 'ABC123',
       messageType: 'TEXT',
       content: 'Hola, quiero informacion',
+      media: null,
+      viewOnce: null,
       timestamp: 1710000000,
     });
+  });
+
+  test('parseMessageUpsert marca "ver una vez" sin extraer la media', () => {
+    const result = parser.parseMessageUpsert({
+      data: {
+        key: { remoteJid: '51999000111@s.whatsapp.net', fromMe: false, id: 'VO-1' },
+        message: {
+          viewOnceMessageV2: {
+            message: {
+              imageMessage: {
+                url: 'https://mmg.whatsapp.net/x',
+                mediaKey: Buffer.alloc(32, 1).toString('base64'),
+                viewOnce: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.messageType).toBe('OTHER');
+    expect(result.content).toBeNull();
+    expect(result.media).toBeNull();
+    expect(result.viewOnce).toEqual({ subtype: 'IMAGE', wrapper: 'viewOnceMessageV2' });
   });
 
   test('parseMessageUpsert usa remoteJidAlt cuando el principal es @lid', () => {
