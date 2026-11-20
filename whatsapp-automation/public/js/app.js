@@ -1437,13 +1437,12 @@ function renderProducts() {
           <td class="mono">${esc(p.stock || '—')}</td>
           <td>${esc(String(p.description || '').slice(0, 80))}${String(p.description || '').length > 80 ? '…' : ''}</td>
           <td>${p.active
-            ? '<span class="badge-inline" style="background:var(--emerald)">ACTIVO</span>'
-            : '<span class="badge-inline" style="background:#64748b">PAUSADO</span>'}</td>
+            ? `<button type="button" class="badge-state on" data-prod-toggle="${esc(p.id)}" title="Pausar: la IA deja de mencionarlo" aria-pressed="true">ACTIVO</button>`
+            : `<button type="button" class="badge-state off" data-prod-toggle="${esc(p.id)}" title="Activar: la IA vuelve a mencionarlo" aria-pressed="false">PAUSADO</button>`}</td>
           <td>
             <div class="btn-row">
               <button class="btn btn-secondary" data-prod-edit="${esc(p.id)}">Editar</button>
               <button class="btn btn-danger" data-prod-del="${esc(p.id)}">Eliminar</button>
-              <button class="btn btn-secondary" data-prod-toggle="${esc(p.id)}" title="${p.active ? 'Pausar: la IA deja de mencionarlo' : 'Activar: la IA vuelve a mencionarlo'}">${p.active ? '⏸️' : '▶️'}</button>
             </div>
           </td>
         </tr>`
@@ -1470,7 +1469,8 @@ function renderProducts() {
   tbody.querySelectorAll('[data-prod-toggle]').forEach((btn) =>
     btn.addEventListener('click', async () => {
       const p = productsState.items.find((x) => x.id === Number(btn.dataset.prodToggle));
-      if (!p) return;
+      if (!p || btn.disabled) return;
+      btn.disabled = true;
       try {
         await apiFetch(`/api/products/${p.id}`, {
           method: 'PUT',
@@ -1478,6 +1478,7 @@ function renderProducts() {
         });
         loadProducts();
       } catch (err) {
+        btn.disabled = false;
         alert(err.message);
       }
     })

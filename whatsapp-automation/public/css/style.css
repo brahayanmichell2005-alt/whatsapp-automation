@@ -524,6 +524,42 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 700; lett
 .badge-inline.active { background: var(--emerald); color: #fff; }
 .badge-inline.inactive { background: var(--muted-2); }
 
+/* El estado del producto es el boton de pausa/activacion: mismo look de
+   pill que el badge anterior, pero interactivo y accesible. */
+.badge-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+.badge-state.on {
+  background: var(--emerald);
+  box-shadow: 0 1px 2px rgba(5, 150, 105, 0.35);
+}
+.badge-state.on:hover { background: var(--emerald-dark); }
+.badge-state.off {
+  background: #64748b;
+  box-shadow: 0 1px 2px rgba(100, 116, 139, 0.3);
+}
+.badge-state.off:hover { background: #475569; }
+.badge-state:active { transform: translateY(1px); }
+.badge-state:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--emerald);
+}
+.badge-state[disabled] { opacity: 0.65; cursor: default; transform: none; }
+
 /* ------------------------------------------------------------------
    Formularios
    ------------------------------------------------------------------ */
