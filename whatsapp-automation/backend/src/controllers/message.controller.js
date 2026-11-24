@@ -178,6 +178,286 @@ async function send(req, res, next) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Chat en vivo: adjuntos y mensajes especiales desde el panel.
+// El archivo viaja en base64 dentro del JSON (Vercel serverless no tiene
+// filesystem persistente; multipart obligaria a otra dependencia).
+// ---------------------------------------------------------------------------
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024; // 3 MB (base64 -> ~4 MB de body)
+
+const MEDIA_KINDS = {
+  image: { kind: 'IMAGE', mediatype: 'image', label: 'Imagen' },
+  video: { kind: 'VIDEO', mediatype: 'video', label: 'Video' },
+  document: { kind: 'DOCUMENT', mediatype: 'document', label: 'Documento' },
+  audio: { kind: 'AUDIO', mediatype: 'audio', label: 'Audio' },
+  sticker: { kind: 'STICKER', mediatype: 'image', label: 'Sticker' },
+};
+
+function decodeBase64(raw) {
+  const text = String(raw || '');
+  const base64 = text.includes(',') ? text.slice(text.indexOf(',') + 1) : text;
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) return null;
+  return buffer;
+}
+
+async function loadConversationContext(conversationId) {
+  const conversation = await conversationModel.findById(conversationId);
+  if (!conversation) {
+    const err = new Error('Conversacion no encontrada');
+    err.status = 404;
+    throw err;
+  }
+  const customer = await customerModel.findById(conversation.customer_id);
+  if (!customer) {
+    const err = new Error('Cliente no encontrado');
+    err.status = 404;
+    throw err;
+  }
+  return { conversation, customer };
+}
+
+async function ensureWhatsappConnected() {
+  const connection = await evolutionService.checkConnection();
+  if (connection.status !== 'CONNECTED') {
+    const err = new Error('WhatsApp no esta conectado. Escanea el QR en la pestana Estado.');
+    err.status = 503;
+    throw err;
+  }
+}
+
+function recipientOf(customer) {
+  return customer.remote_jid || customer.phone;
+}
+
+async function registerPanelMessage({ conversation, customer, result, messageType, content, kind, bytes, mimetype, meta }) {
+  const message = await messageModel.create({
+    conversationId: conversation.id,
+    customerId: customer.id,
+    direction: 'OUTBOUND',
+    messageType,
+    content: content || null,
+    externalMessageId: result ? result.externalMessageId : null,
+    status: 'SENT',
+    media: kind ? { kind, mimetype, url: null, mediaKey: null } : null,
+    mediaData: bytes || null,
+    mediaMeta: meta || null,
+  });
+  await conversationModel.touchLastMessage(conversation.id);
+  await customerModel.touchLastMessage(customer.id);
+  return message;
+}
+
+async function sendMedia(req, res, next) {
+  try {
+    const conversationId = parseInt(req.body.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.body.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const spec = MEDIA_KINDS[String(req.body.kind || '').toLowerCase()];
+    if (!spec) {
+      return res.status(400).json({ error: 'Tipo de adjunto no valido (image, video, document, audio o sticker)' });
+    }
+    const bytes = decodeBase64(req.body.data);
+    if (!bytes) return res.status(400).json({ error: 'El archivo esta vacio' });
+    if (bytes.length > MAX_UPLOAD_BYTES) {
+      return res.status(413).json({ error: 'El archivo supera 3 MB. Comprime el archivo o envia un enlace.' });
+    }
+
+    const { conversation, customer } = await loadConversationContext(conversationId);
+    await ensureWhatsappConnected();
+    await queueModel.cancelPendingByCustomer(customer.id);
+
+    const mimetype = String(req.body.mimetype || '').trim() || 'application/octet-stream';
+    const fileName = String(req.body.filename || `${spec.kind.toLowerCase()}-${Date.now()}`).slice(0, 180);
+    const caption = String(req.body.caption || '').trim().slice(0, 1024);
+    const recipient = recipientOf(customer);
+    const base64 = bytes.toString('base64');
+
+    let result;
+    if (spec.kind === 'AUDIO') {
+      result = await evolutionService.sendAudioMessage(recipient, { media: base64, mimetype });
+    } else if (spec.kind === 'STICKER') {
+      result = await evolutionService.sendStickerMessage(recipient, { sticker: base64, mimetype });
+    } else {
+      result = await evolutionService.sendMediaMessage(recipient, {
+        mediatype: spec.mediatype,
+        mimetype,
+        fileName,
+        caption,
+        media: base64,
+      });
+    }
+
+    const message = await registerPanelMessage({
+      conversation,
+      customer,
+      result,
+      messageType: spec.kind,
+      content: caption || null,
+      kind: spec.kind,
+      bytes,
+      mimetype,
+      meta: { fileName, size: bytes.length },
+    });
+
+    await logModel.record({
+      eventType: 'panel_send_media',
+      level: 'INFO',
+      message: `${spec.label} enviado desde el panel a ${customer.phone}`,
+      metadata: { messageId: message.id, conversationId: conversation.id, kind: spec.kind },
+    });
+
+    return res.status(201).json(message);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function sendContact(req, res, next) {
+  try {
+    const conversationId = parseInt(req.body.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.body.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const name = String(req.body.name || '').trim().slice(0, 120);
+    const phone = String(req.body.phone || '').replace(/\D/g, '');
+    if (!name) return res.status(400).json({ error: 'El nombre del contacto es obligatorio' });
+    if (phone.length < 6) return res.status(400).json({ error: 'El telefono del contacto no es valido' });
+
+    const { conversation, customer } = await loadConversationContext(conversationId);
+    await ensureWhatsappConnected();
+    await queueModel.cancelPendingByCustomer(customer.id);
+
+    const result = await evolutionService.sendContactMessage(recipientOf(customer), { name, phoneNumber: phone });
+    const message = await registerPanelMessage({
+      conversation,
+      customer,
+      result,
+      messageType: 'OTHER',
+      content: `👤 Contacto: ${name}\n+${phone}`,
+      kind: 'CONTACT',
+    });
+    return res.status(201).json(message);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function sendPoll(req, res, next) {
+  try {
+    const conversationId = parseInt(req.body.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.body.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const question = String(req.body.question || '').trim().slice(0, 255);
+    const options = (Array.isArray(req.body.options) ? req.body.options : [])
+      .map((o) => String(o || '').trim().slice(0, 100))
+      .filter(Boolean)
+      .slice(0, 10);
+    if (!question) return res.status(400).json({ error: 'La pregunta de la encuesta es obligatoria' });
+    if (options.length < 2) return res.status(400).json({ error: 'La encuesta necesita al menos 2 opciones' });
+
+    const { conversation, customer } = await loadConversationContext(conversationId);
+    await ensureWhatsappConnected();
+    await queueModel.cancelPendingByCustomer(customer.id);
+
+    const result = await evolutionService.sendPollMessage(recipientOf(customer), {
+      name: question,
+      values: options,
+      selectableCount: 1,
+    });
+    const message = await registerPanelMessage({
+      conversation,
+      customer,
+      result,
+      messageType: 'OTHER',
+      content: `📊 ${question}\n${options.map((o) => `• ${o}`).join('\n')}`,
+      kind: 'POLL',
+    });
+    return res.status(201).json(message);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function sendEvent(req, res, next) {
+  try {
+    const conversationId = parseInt(req.body.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.body.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const name = String(req.body.name || '').trim().slice(0, 200);
+    const description = String(req.body.description || '').trim().slice(0, 1024);
+    const startTime = String(req.body.start_time || '').trim();
+    const location = String(req.body.location || '').trim().slice(0, 200);
+    if (!name) return res.status(400).json({ error: 'El nombre del evento es obligatorio' });
+    if (!startTime) return res.status(400).json({ error: 'La fecha y hora del evento son obligatorias' });
+
+    const { conversation, customer } = await loadConversationContext(conversationId);
+    await ensureWhatsappConnected();
+    await queueModel.cancelPendingByCustomer(customer.id);
+
+    const recipient = recipientOf(customer);
+    // Se intenta el evento nativo; si la version de Evolution no lo trae se
+    // envia como texto formateado (el cliente recibe la misma informacion).
+    const native = await evolutionService.sendEventMessage(recipient, {
+      name,
+      description,
+      startTime,
+      location,
+    });
+    const startAt = new Date(startTime);
+    const when = Number.isNaN(startAt.getTime()) ? startTime : startAt.toLocaleString('es-PE', { timeZone: 'America/Lima' });
+    const content = `📅 ${name}\n${when}${location ? `\n📍 ${location}` : ''}${description ? `\n${description}` : ''}`;
+    const result = native || (await evolutionService.sendTextMessage(recipient, content));
+
+    const message = await registerPanelMessage({
+      conversation,
+      customer,
+      result,
+      messageType: 'OTHER',
+      content,
+      kind: 'EVENT',
+    });
+    return res.status(201).json(message);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+}
+
+// Estados de los mensajes salientes (ticks del chat en vivo).
+async function statuses(req, res, next) {
+  try {
+    const conversationId = parseInt(req.query.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.query.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const rows = await messageModel.listStatuses(conversationId);
+    return res.json(rows);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// "Vaciar chat": borra solo el historial local de esa conversacion.
+async function clearConversation(req, res, next) {
+  try {
+    const conversationId = parseInt(req.query.conversation_id, 10);
+    if (!/^\d+$/.test(String(req.query.conversation_id)) || Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: 'conversation_id debe ser un numero entero' });
+    }
+    const deleted = await messageModel.deleteByConversation(conversationId);
+    return res.json({ deleted });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 // Sirve el archivo multimedia de un mensaje (audio, imagen, sticker, video o
 // documento) para pintarlo en el panel. Autenticacion: Bearer normal o
 // ?token= en la URL (necesario para <img>/<audio>, que no pueden mandar
@@ -335,4 +615,18 @@ async function summary(req, res, next) {
   }
 }
 
-module.exports = { list, getById, remove, send, media, suggestions, summary };
+module.exports = {
+  list,
+  getById,
+  remove,
+  send,
+  sendMedia,
+  sendContact,
+  sendPoll,
+  sendEvent,
+  statuses,
+  clearConversation,
+  media,
+  suggestions,
+  summary,
+};

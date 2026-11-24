@@ -46,7 +46,7 @@ app.use(helmet());
 app.use(cors(env.CORS_ORIGIN ? { origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()) } : undefined));
 
 // Parseo de JSON en el body de las requests
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Logging estructurado de cada request

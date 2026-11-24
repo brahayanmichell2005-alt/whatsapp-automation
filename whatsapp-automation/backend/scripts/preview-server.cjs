@@ -24,7 +24,7 @@ http.createServer((req, res) => {
         try { localStorage.setItem('wa_admin_token', 'preview-token'); } catch (e) {}
         (function () {
           var realFetch = window.fetch;
-          var LIST_RE = '(customers|conversations|messages|queue|scheduled-messages|reservations|logs|products|campaigns|bot-rules|instances|follow-ups|automation($|\\?))';
+          var LIST_RE = '(customers|conversations|messages|queue|scheduled-messages|reservations|logs|products|campaigns|bot-rules|instances|follow-ups|automation)';
           function fakeBody(u) {
             var coord = u + ' ';
             if (coord.indexOf('/api/dashboard/stats') !== -1) {

@@ -1795,3 +1795,176 @@ html.dark .views .wa-bubble { background: #ffffff !important; border: 1px solid 
 .views .bubble { font-size: 0.84rem; }
 .views .chat-item-name { font-size: 0.82rem; }
 .views .chat-item-preview { font-size: 0.74rem; }
+
+/* Burbuja resaltada al buscar dentro de la conversacion */
+.bubble-flash { outline: 2px solid var(--f-green, #107c41); outline-offset: 2px; border-radius: 10px; }
+
+/* ====================================================================
+   CHAT EN VIVO (nov 2026): adjuntos, estados (ticks), llamadas y menu
+   de "mas opciones". Mantiene la estetica Fluent 9 y el texto negro.
+   ==================================================================== */
+
+/* Botones de icono de la cabecera del chat */
+.chat-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--f-stroke-strong, #d1d1d1);
+  background: #fff;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.82rem;
+  cursor: pointer;
+  box-shadow: var(--f-under, 0 1.6px 3.6px rgba(0, 0, 0, 0.13));
+  transition: background 0.12s ease;
+}
+.chat-icon-btn:hover { background: #fafafa; }
+.chat-icon-btn.call { background: var(--f-green, #107c41); border-color: var(--f-green, #107c41); color: #fff; }
+.chat-icon-btn.call:hover { background: var(--f-green-hover, #0e6b39); }
+
+/* Menu de 3 puntos */
+.chat-more-wrap { position: relative; }
+.chat-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 232px;
+  background: #fff;
+  border: 1px solid var(--f-stroke, #e1e1e1);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  padding: 5px;
+  z-index: 70;
+}
+.chat-more-menu[hidden] { display: none; }
+.chat-more-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #111827;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.chat-more-menu button:hover { background: #f3f4f6; }
+.chat-more-menu button.danger { color: #c50f1f; }
+.chat-more-sep { height: 1px; background: var(--f-stroke, #e1e1e1); margin: 4px 6px; }
+
+/* Menu de adjuntos */
+.chat-attach-wrap { position: relative; }
+.attach-menu {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 6px);
+  width: 224px;
+  background: #fff;
+  border: 1px solid var(--f-stroke, #e1e1e1);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  padding: 6px;
+  z-index: 70;
+}
+.attach-menu[hidden] { display: none; }
+.attach-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #111827;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.attach-menu button:hover { background: #f3f4f6; }
+.am-ico {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.74rem;
+}
+.am-ico.doc { background: #dbeafe; }
+.am-ico.foto { background: #e0f2fe; }
+.am-ico.cam { background: #fce7f3; }
+.am-ico.audio { background: #ffedd5; }
+.am-ico.cont { background: #dbeafe; }
+.am-ico.poll { background: #fef9c3; }
+.am-ico.event { background: #fee2e2; }
+.am-ico.sticker { background: #dcfce7; }
+
+/* Boton de adjuntar dentro del compositor */
+.chat-inputbar .chat-icon-btn { flex: 0 0 36px; width: 36px; height: 36px; font-size: 1rem; }
+
+/* Ticks de estado en las burbujas salientes */
+.bubble-status { display: inline-flex; align-items: center; margin-left: 2px; }
+.bubble-status svg { width: 14px; height: 10px; display: block; }
+.bubble-status.pending svg { width: 11px; height: 11px; }
+.bubble-status.sent svg,
+.bubble-status.delivered svg { color: #4b5563; }
+.bubble-status.read svg { color: #53bdeb; }
+.bubble-status.failed { color: #c50f1f; font-weight: 800; font-size: 0.64rem; }
+
+/* Modal: campos y camara */
+.modal-sm { max-width: 400px; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #111827;
+}
+.field input,
+.field textarea { width: 100%; }
+.hint-note {
+  font-size: 0.64rem;
+  line-height: 1.45;
+  color: #374151;
+  margin: 6px 0 0;
+}
+.camera-video {
+  width: 100%;
+  max-height: 260px;
+  border-radius: 10px;
+  background: #000;
+  object-fit: cover;
+}
+
+/* Modal de llamada */
+.call-body { text-align: center; }
+.call-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  margin: 0 auto 8px;
+  background: linear-gradient(135deg, #34d399, #107c41);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 0 0 6px rgba(16, 124, 65, 0.12);
+}
+.call-name { font-size: 0.86rem; font-weight: 700; color: #000; }
+.call-phone { font-size: 0.66rem; color: #374151; margin-top: 2px; font-family: var(--mono, monospace); }
+.call-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
+
+/* Burbuja de adjuntos enviados desde el panel */
+.views .bubble .media-wrap { margin-bottom: 4px; }
+.views .bubble .bubble-file { display: inline-flex; align-items: center; gap: 6px; }

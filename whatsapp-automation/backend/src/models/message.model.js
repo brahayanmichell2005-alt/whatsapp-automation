@@ -93,6 +93,45 @@ async function updateStatus(id, status) {
   return rows[0] || null;
 }
 
+// ACK de WhatsApp: el webhook identifica el mensaje por su id externo, no por
+// el id local. Solo se mueve hacia adelante (un READ tardio no debe volver a
+// SENT si llegara desordenado).
+const STATUS_ORDER = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 0 };
+
+async function updateStatusByExternalId(externalMessageId, status) {
+  if (!externalMessageId || !status) return null;
+  const sentAtClause = status === 'SENT' ? ', sent_at = COALESCE(sent_at, NOW())' : '';
+  const { rows } = await pool.query(
+    `UPDATE messages
+        SET status = $1${sentAtClause}
+      WHERE external_message_id = $2
+        AND COALESCE((CASE status
+              WHEN 'SENT' THEN 1 WHEN 'DELIVERED' THEN 2 WHEN 'READ' THEN 3 ELSE 0 END), 0)
+            <= COALESCE((CASE $1
+              WHEN 'SENT' THEN 1 WHEN 'DELIVERED' THEN 2 WHEN 'READ' THEN 3 ELSE 0 END), 0)
+      RETURNING id, status`,
+    [status, externalMessageId]
+  );
+  return rows[0] || null;
+}
+
+// "Vaciar chat" desde el panel: borra el historial local de la conversacion.
+async function deleteByConversation(conversationId) {
+  const { rowCount } = await pool.query('DELETE FROM messages WHERE conversation_id = $1', [conversationId]);
+  return rowCount;
+}
+
+// Estados de los mensajes salientes de una conversacion (para los ticks).
+async function listStatuses(conversationId, { limit = 200 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT id, status FROM messages
+      WHERE conversation_id = $1 AND direction = 'OUTBOUND'
+      ORDER BY id DESC LIMIT $2`,
+    [conversationId, limit]
+  );
+  return rows;
+}
+
 // Borrado fisico desde el panel (vista de chat en vivo). Devuelve true si
 // existia y se borro, false si ya no estaba.
 async function remove(id) {
@@ -169,6 +208,9 @@ module.exports = {
   findByExternalId,
   create,
   updateStatus,
+  updateStatusByExternalId,
+  deleteByConversation,
+  listStatuses,
   remove,
   listByConversation,
   listSince,

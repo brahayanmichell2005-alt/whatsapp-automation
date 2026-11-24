@@ -417,6 +417,136 @@ async function sendTextMessage(phone, text) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Envios multimedia desde el panel (chat en vivo). Todos reciben el archivo
+// como base64 (sin multipart: Vercel serverless + JSON es lo mas simple y
+// estable). El limite real lo aplica el controller (~3 MB por archivo).
+// ---------------------------------------------------------------------------
+function recipientOf(phone) {
+  const raw = String(phone || '').trim();
+  return raw.includes('@') ? raw : digitsOnly(raw);
+}
+
+async function sendMediaMessage(phone, { mediatype, mimetype, fileName, caption, media }) {
+  const baseURL = await requireConfig();
+  try {
+    const { data } = await client(baseURL).post(`/message/sendMedia/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      mediatype,
+      mimetype,
+      fileName,
+      caption: caption || undefined,
+      media,
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    throw serviceError('enviar archivo', err, baseURL);
+  }
+}
+
+// Nota de voz de WhatsApp (no un archivo de audio adjunto).
+async function sendAudioMessage(phone, { media, mimetype }) {
+  const baseURL = await requireConfig();
+  try {
+    const { data } = await client(baseURL).post(`/message/sendAudio/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      audio: media,
+      mimetype: mimetype || 'audio/ogg',
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    throw serviceError('enviar audio', err, baseURL);
+  }
+}
+
+async function sendStickerMessage(phone, { sticker, mimetype }) {
+  const baseURL = await requireConfig();
+  try {
+    const { data } = await client(baseURL).post(`/message/sendSticker/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      sticker,
+      mimetype: mimetype || 'image/webp',
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    throw serviceError('enviar sticker', err, baseURL);
+  }
+}
+
+async function sendContactMessage(phone, { name, phoneNumber }) {
+  const baseURL = await requireConfig();
+  const number = digitsOnly(phoneNumber);
+  try {
+    const { data } = await client(baseURL).post(`/message/sendContact/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      contact: [
+        {
+          fullName: name,
+          wuid: number,
+          phoneNumber: `+${number}`,
+        },
+      ],
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    throw serviceError('enviar contacto', err, baseURL);
+  }
+}
+
+async function sendPollMessage(phone, { name, values, selectableCount = 1 }) {
+  const baseURL = await requireConfig();
+  try {
+    const { data } = await client(baseURL).post(`/message/sendPoll/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      name,
+      selectableCount,
+      values,
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    throw serviceError('enviar encuesta', err, baseURL);
+  }
+}
+
+// Evento de calendario: Evolution API no lo soporta en todas sus versiones.
+// Se intenta la ruta nativa; si no existe (404) se devuelve null para que el
+// controller envie un texto con los datos del evento como respaldo.
+async function sendEventMessage(phone, { name, description, startTime, location }) {
+  const baseURL = await requireConfig();
+  try {
+    const { data } = await client(baseURL).post(`/message/sendEvent/${encodeURIComponent(instanceName())}`, {
+      number: recipientOf(phone),
+      name,
+      description,
+      startTime,
+      location,
+    });
+    return {
+      externalMessageId: (data && data.key && data.key.id) || (data && data.messageId) || null,
+      raw: data,
+    };
+  } catch (err) {
+    const status = err && err.response && err.response.status;
+    if (status === 404 || status === 405) return null;
+    throw serviceError('enviar evento', err, baseURL);
+  }
+}
+
 // Nombre del contacto tal como lo tiene guardado el telefono vinculado
 // (agenda de WhatsApp). Evolution API lo expone en chat/findContacts. Es
 // "mejor esfuerzo": ante cualquier fallo devuelve null y no frena el bot.
@@ -480,6 +610,12 @@ module.exports = {
   logoutInstance,
   setWebhook,
   sendTextMessage,
+  sendMediaMessage,
+  sendAudioMessage,
+  sendStickerMessage,
+  sendContactMessage,
+  sendPollMessage,
+  sendEventMessage,
   findContactName,
   revokeMessage,
   mapConnectionStatus,

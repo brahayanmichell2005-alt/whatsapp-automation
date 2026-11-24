@@ -563,6 +563,10 @@ function chatBubbleParts(m) {
     DOCUMENT: '📄 Documento',
     LOCATION: '📍 Ubicación',
     VIEW_ONCE: '🔒 Ver una vez',
+    CONTACT: '👤 Contacto',
+    POLL: '📊 Encuesta',
+    EVENT: '📅 Evento',
+    CALL: '📞 Llamada',
   };
   const kind = m.media_kind || m.message_type;
   return { etiqueta, texto, tipo: tipoLabel[kind] || (m.media_url ? '📎 Archivo' : null), kind };
@@ -592,7 +596,10 @@ function chatBubbleMedia(m, kind) {
       <button type="button" class="bubble-viewonce-btn" data-ask-resend data-subtype="${esc(subtype)}">Pedir reenvío</button>
     </div>`;
   }
-  if (!m.media_url || !m.media_key) return '';
+  // Solo estos tipos tienen archivo. Contacto/encuesta/evento se pintan como
+  // texto formateado (no deben caer en "Archivo no disponible").
+  if (!['IMAGE', 'STICKER', 'AUDIO', 'VIDEO', 'DOCUMENT'].includes(kind)) return '';
+  if (!m.media_url && !m.media_key && !m.media_mime) return '';
   if (kind === 'IMAGE' || kind === 'STICKER') {
     const cls = kind === 'STICKER' ? ' bubble-img sticker' : ' bubble-img';
     const zoom = kind === 'IMAGE' ? ' data-zoom="1"' : '';
@@ -615,6 +622,39 @@ function chatBubbleMedia(m, kind) {
   return '<div class="bubble-type">📎 Archivo (vista no disponible)</div>';
 }
 
+// --- Estados del mensaje (ticks) -------------------------------------
+// WhatsApp informa enviado/entregado/leido por webhook (messages.update) y
+// el backend lo guarda en messages.status. Aqui solo se dibuja.
+const TICK_SVG_SINGLE =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 6.5l3.2 3.2L11 3"/></svg>';
+const TICK_SVG_DOUBLE =
+  '<svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6.5l3.2 3.2L11 3"/><path d="M7 6.5l3.2 3.2L17 3"/></svg>';
+const TICK_SVG_PENDING =
+  '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M7 4v3.2l2 1.3"/></svg>';
+
+const STATUS_LABEL = {
+  PENDING: 'Pendiente de envío',
+  SENT: 'Enviado',
+  DELIVERED: 'Entregado',
+  READ: 'Leído',
+  FAILED: 'No se pudo enviar',
+};
+
+function statusTickHtml(status) {
+  const st = String(status || 'SENT').toUpperCase();
+  if (st === 'FAILED' || st === 'ERROR') return '!';
+  if (st === 'PENDING') return TICK_SVG_PENDING;
+  if (st === 'READ' || st === 'DELIVERED') return TICK_SVG_DOUBLE;
+  return TICK_SVG_SINGLE;
+}
+
+function chatStatusHtml(m) {
+  if (m.direction === 'INBOUND') return '';
+  const st = String(m.status || 'SENT').toUpperCase();
+  const cls = st === 'ERROR' ? 'failed' : st.toLowerCase();
+  return `<span class="bubble-status ${cls}" data-status-msg="${esc(m.id)}" data-status="${esc(st)}" title="${esc(STATUS_LABEL[st] || st)}">${statusTickHtml(st)}</span>`;
+}
+
 function chatBubbleHtml(m) {
   const { etiqueta, texto, tipo, kind } = chatBubbleParts(m);
   const side = m.direction === 'INBOUND' ? 'in' : 'out';
@@ -630,14 +670,35 @@ function chatBubbleHtml(m) {
   return `<div class="chat-row ${side}" data-msg="${esc(m.id)}">
     <div class="bubble">
       ${parts.join('')}
-      <div class="bubble-meta">${esc(fmtDate(m.created_at))}
+      <div class="bubble-meta">${esc(fmtDate(m.created_at))}${chatStatusHtml(m)}
         <button class="bubble-del" data-del-msg="${esc(m.id)}" title="Borrar mensaje">🗑️</button>
       </div>
     </div>
   </div>`;
 }
 
+// Actualiza los ticks sin recargar el historial (el poll los pide aparte).
+async function refreshChatStatuses() {
+  if (!chatState.conversationId) return;
+  try {
+    const rows = await apiFetch(`/api/messages/statuses?conversation_id=${chatState.conversationId}`);
+    (rows || []).forEach((row) => {
+      const el = document.querySelector(`[data-status-msg="${row.id}"]`);
+      if (!el) return;
+      const st = String(row.status || '').toUpperCase();
+      if (el.dataset.status === st) return;
+      el.dataset.status = st;
+      el.className = `bubble-status ${st === 'ERROR' ? 'failed' : st.toLowerCase()}`;
+      el.title = STATUS_LABEL[st] || st;
+      el.innerHTML = statusTickHtml(st);
+    });
+  } catch (err) {
+    /* sin conexion: el proximo tick reintenta */
+  }
+}
+
 function chatNombre(c) {
+  if (!c) return 'Cliente';
   return c.customer_name || c.customer_phone || `Cliente ${c.customer_id}`;
 }
 
@@ -872,7 +933,7 @@ async function sendPanelMessage(text) {
   if (!chatState.conversationId || chatState.sending) return;
   chatState.sending = true;
   const input = document.getElementById('chat-input');
-  const btn = document.querySelector('#chat-form button');
+  const btn = document.querySelector('#chat-form button[type="submit"]');
   input.disabled = true;
   if (btn) btn.disabled = true;
   try {
@@ -997,6 +1058,540 @@ async function deleteMessage(id) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Chat en vivo avanzado: adjuntos (documento, fotos/videos, camara, audio,
+// contacto, encuesta, evento y sticker), llamadas y menu de "mas opciones".
+// Todo lo que se envia desde aqui pasa por el backend, que lo manda a
+// WhatsApp y lo registra como mensaje OUTBOUND (con su estado real).
+// ---------------------------------------------------------------------
+const MAX_CHAT_FILE_BYTES = 3 * 1024 * 1024; // 3 MB (base64 -> ~4 MB)
+let cameraStream = null;
+
+function chatConv() {
+  return chatState.conversations.find((c) => c.id === chatState.conversationId) || null;
+}
+
+function chatToast(message, type = 'success') {
+  const t = document.getElementById('toast');
+  if (!t) {
+    console.log(message);
+    return;
+  }
+  t.textContent = message;
+  t.className = `toast ${type}`;
+  clearTimeout(chatToast._timer);
+  chatToast._timer = setTimeout(() => t.classList.add('hidden'), 3600);
+}
+
+// Cierra los menus flotantes (adjuntos y mas opciones).
+function closeChatMenus() {
+  const attach = document.getElementById('attach-menu');
+  const more = document.getElementById('chat-more-menu');
+  if (attach) attach.hidden = true;
+  if (more) more.hidden = true;
+}
+
+function toggleChatMenu(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const willOpen = el.hidden;
+  closeChatMenus();
+  el.hidden = !willOpen;
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Un sticker de WhatsApp debe ser WEBP: si el operador elige un JPG/PNG se
+// convierte aqui mismo (canvas) antes de enviarlo.
+async function toStickerWebp(file) {
+  const bitmap = await createImageBitmap(file);
+  const max = 512;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
+  if (!blob) throw new Error('No se pudo convertir la imagen a sticker');
+  return new File([blob], 'sticker.webp', { type: 'image/webp' });
+}
+
+// Pinta un mensaje ya enviado sin esperar al poll de 5 s.
+function appendOutgoingMessage(message) {
+  const container = document.getElementById('chat-messages');
+  if (!container || !message || !message.id) return;
+  const yaVisto = Array.from(container.querySelectorAll('[data-msg]')).some(
+    (el) => Number(el.dataset.msg) === message.id
+  );
+  if (yaVisto) return;
+  container.insertAdjacentHTML('beforeend', chatBubbleHtml(message));
+  bindBubbleActions(container);
+  container.scrollTop = container.scrollHeight;
+  if (message.id > chatState.sinceId) chatState.sinceId = message.id;
+}
+
+// Envia un archivo como adjunto del chat (base64 dentro del JSON).
+async function uploadChatFile(file, kind, caption = '') {
+  if (!chatState.conversationId) return chatToast('Elige una conversacion primero', 'error');
+  if (!file) return;
+  if (file.size > MAX_CHAT_FILE_BYTES) {
+    return chatToast('El archivo supera 3 MB. Comprime el archivo o envia un enlace.', 'error');
+  }
+  try {
+    let finalFile = file;
+    let finalKind = kind;
+    if (kind === 'sticker') {
+      finalFile = await toStickerWebp(file);
+      finalKind = 'sticker';
+    }
+    const data = await readFileAsBase64(finalFile);
+    chatToast('Enviando archivo...', 'success');
+    const message = await apiFetch('/api/messages/media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversation_id: chatState.conversationId,
+        kind: finalKind,
+        filename: finalFile.name,
+        mimetype: finalFile.type || 'application/octet-stream',
+        caption: caption || '',
+        data,
+      }),
+    });
+    appendOutgoingMessage(message);
+    chatToast('Archivo enviado ✅');
+    loadChatList();
+  } catch (err) {
+    chatToast(`No se pudo enviar: ${err.message}`, 'error');
+  }
+}
+
+// Toma el texto escrito como pie de foto (si hay) y limpia el compositor.
+function takeChatCaption() {
+  const input = document.getElementById('chat-input');
+  const caption = input ? input.value.trim() : '';
+  if (input && caption) input.value = '';
+  return caption;
+}
+
+function chatDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+// ---------------------------------------------------------------------
+// Camara (solo foto: getUserMedia + canvas -> JPEG)
+// ---------------------------------------------------------------------
+async function openChatCamera() {
+  const modal = document.getElementById('modal-chat-camera');
+  const video = document.getElementById('chat-camera-video');
+  const note = document.getElementById('chat-camera-note');
+  if (!modal || !video) return;
+  modal.classList.remove('hidden');
+  if (note) note.textContent = 'Pidiendo permiso a la camara...';
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    video.srcObject = cameraStream;
+    if (note) note.textContent = 'Toma una foto y enviala como imagen.';
+  } catch (err) {
+    if (note) note.textContent = `No se pudo abrir la camara: ${err.message}. Puedes usar "Fotos y videos".`;
+  }
+}
+
+function stopChatCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+  const video = document.getElementById('chat-camera-video');
+  if (video) video.srcObject = null;
+}
+
+async function captureChatPhoto() {
+  const video = document.getElementById('chat-camera-video');
+  if (!video || !video.videoWidth) return chatToast('La camara todavia no esta lista', 'error');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+  if (!blob) return chatToast('No se pudo tomar la foto', 'error');
+  const file = new File([blob], `camara-${Date.now()}.jpg`, { type: 'image/jpeg' });
+  const modal = document.getElementById('modal-chat-camera');
+  if (modal) modal.classList.add('hidden');
+  stopChatCamera();
+  await uploadChatFile(file, 'image', takeChatCaption());
+}
+
+// ---------------------------------------------------------------------
+// Llamadas: WhatsApp no permite iniciar llamadas desde la API/panel; el
+// modal muestra el numero y abre WhatsApp para llamar desde el telefono.
+// ---------------------------------------------------------------------
+function openCallModal(isVideo = false) {
+  const conv = chatConv();
+  if (!conv) return chatToast('Elige una conversacion primero', 'error');
+  const phone = chatDigits(conv.customer_phone || conv.customer_remote_jid);
+  if (!phone) return chatToast('Este cliente no tiene un telefono valido', 'error');
+
+  const nombre = chatNombre(conv);
+  const initials = nombre
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0].toUpperCase())
+    .join('');
+  const avatar = document.getElementById('call-avatar');
+  const nameEl = document.getElementById('call-name');
+  const phoneEl = document.getElementById('call-phone');
+  const link = document.getElementById('call-wa-link');
+  if (avatar) avatar.textContent = initials || 'WA';
+  if (nameEl) nameEl.textContent = nombre;
+  if (phoneEl) phoneEl.textContent = `+${phone}`;
+  if (link) link.href = `https://wa.me/${phone}`;
+
+  const modal = document.getElementById('modal-call');
+  if (modal) modal.classList.remove('hidden');
+  if (isVideo) {
+    chatToast('WhatsApp no permite iniciar videollamadas desde el panel. Abre WhatsApp y toca 🎥.', 'error');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Menu de "mas opciones" (⋮)
+// ---------------------------------------------------------------------
+function chatMutedMap() {
+  try {
+    return JSON.parse(localStorage.getItem('wa_chat_muted') || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function toggleChatMuted() {
+  if (!chatState.conversationId) return;
+  const map = chatMutedMap();
+  const id = String(chatState.conversationId);
+  map[id] = !map[id];
+  try {
+    localStorage.setItem('wa_chat_muted', JSON.stringify(map));
+  } catch (err) {
+    /* almacenamiento lleno o bloqueado: no es critico */
+  }
+  syncMuteLabel();
+  chatToast(map[id] ? 'Notificaciones silenciadas para este chat' : 'Notificaciones activadas');
+}
+
+function syncMuteLabel() {
+  const btn = document.querySelector('#chat-more-menu [data-more="silenciar"]');
+  if (!btn) return;
+  const muted = !!chatMutedMap()[String(chatState.conversationId)];
+  btn.textContent = muted ? '🔔 Activar notificaciones' : '🔕 Silenciar notificaciones';
+}
+
+function findInChat() {
+  const q = window.prompt('Buscar en esta conversacion:');
+  if (!q || !q.trim()) return;
+  const needle = q.trim().toLowerCase();
+  const bubbles = Array.from(document.querySelectorAll('#chat-messages .bubble'));
+  const hit = bubbles.find((b) => b.textContent.toLowerCase().includes(needle));
+  if (!hit) return chatToast('No se encontro ese texto en la conversacion', 'error');
+  hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  hit.classList.add('bubble-flash');
+  setTimeout(() => hit.classList.remove('bubble-flash'), 1800);
+}
+
+function exportChat() {
+  const rows = Array.from(document.querySelectorAll('#chat-messages .chat-row'));
+  if (!rows.length) return chatToast('No hay mensajes para exportar', 'error');
+  const conv = chatConv();
+  const lines = rows.map((row) => {
+    const meta = row.querySelector('.bubble-meta');
+    const hora = meta ? String(meta.textContent || '').trim().split(' ')[0] : '';
+    const quien = row.classList.contains('out') ? 'Yo' : chatNombre(conv);
+    const texto = String(row.querySelector('.bubble')?.innerText || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return `[${hora}] ${quien}: ${texto}`;
+  });
+  const header = `Conversacion con ${chatNombre(conv)}\nTelefono: ${(conv && conv.customer_phone) || '-'}\n\n`;
+  const blob = new Blob([header + lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `conversacion-${chatState.conversationId}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  chatToast('Conversacion exportada ✅');
+}
+
+async function blockChatCustomer() {
+  const conv = chatConv();
+  if (!conv) return;
+  if (!window.confirm(`¿Bloquear a ${chatNombre(conv)}? La IA dejara de responderle.`)) return;
+  try {
+    await apiFetch(`/api/customers/${conv.customer_id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'BLOCKED' }),
+    });
+    chatToast('Cliente bloqueado ✅');
+    loadChatList();
+  } catch (err) {
+    chatToast(`No se pudo bloquear: ${err.message}`, 'error');
+  }
+}
+
+async function clearChat() {
+  if (!chatState.conversationId) return;
+  if (!window.confirm('¿Vaciar el chat? Se borra el historial de este panel (no de WhatsApp).')) return;
+  try {
+    const r = await apiFetch(`/api/messages?conversation_id=${chatState.conversationId}`, {
+      method: 'DELETE',
+    });
+    chatState.sinceId = 0;
+    const container = document.getElementById('chat-messages');
+    if (container) container.innerHTML = '<p class="chat-empty">Sin mensajes.</p>';
+    chatToast(`Chat vaciado (${r.deleted || 0} mensajes)`);
+    loadChatList();
+  } catch (err) {
+    chatToast(`No se pudo vaciar: ${err.message}`, 'error');
+  }
+}
+
+// Envia contacto/encuesta/evento desde sus modales.
+async function submitChatContact(e) {
+  e.preventDefault();
+  if (!chatState.conversationId) return;
+  const name = document.getElementById('chat-contact-name').value.trim();
+  const phone = document.getElementById('chat-contact-phone').value.trim();
+  try {
+    const message = await apiFetch('/api/messages/contact', {
+      method: 'POST',
+      body: JSON.stringify({ conversation_id: chatState.conversationId, name, phone }),
+    });
+    appendOutgoingMessage(message);
+    document.getElementById('modal-chat-contact').classList.add('hidden');
+    document.getElementById('form-chat-contact').reset();
+    chatToast('Contacto enviado ✅');
+  } catch (err) {
+    chatToast(`No se pudo enviar: ${err.message}`, 'error');
+  }
+}
+
+async function submitChatPoll(e) {
+  e.preventDefault();
+  if (!chatState.conversationId) return;
+  const question = document.getElementById('chat-poll-question').value.trim();
+  const options = ['chat-poll-opt1', 'chat-poll-opt2', 'chat-poll-opt3', 'chat-poll-opt4']
+    .map((id) => document.getElementById(id).value.trim())
+    .filter(Boolean);
+  try {
+    const message = await apiFetch('/api/messages/poll', {
+      method: 'POST',
+      body: JSON.stringify({ conversation_id: chatState.conversationId, question, options }),
+    });
+    appendOutgoingMessage(message);
+    document.getElementById('modal-chat-poll').classList.add('hidden');
+    document.getElementById('form-chat-poll').reset();
+    chatToast('Encuesta enviada ✅');
+  } catch (err) {
+    chatToast(`No se pudo enviar: ${err.message}`, 'error');
+  }
+}
+
+async function submitChatEvent(e) {
+  e.preventDefault();
+  if (!chatState.conversationId) return;
+  const name = document.getElementById('chat-event-name').value.trim();
+  const start = document.getElementById('chat-event-start').value;
+  const location = document.getElementById('chat-event-location').value.trim();
+  const description = document.getElementById('chat-event-desc').value.trim();
+  try {
+    const message = await apiFetch('/api/messages/event', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: chatState.conversationId,
+        name,
+        start_time: start,
+        location,
+        description,
+      }),
+    });
+    appendOutgoingMessage(message);
+    document.getElementById('modal-chat-event').classList.add('hidden');
+    document.getElementById('form-chat-event').reset();
+    chatToast('Evento enviado ✅');
+  } catch (err) {
+    chatToast(`No se pudo enviar: ${err.message}`, 'error');
+  }
+}
+
+function bindChatExtras() {
+  // Boton de adjuntar y menu de 8 opciones.
+  const btnAttach = document.getElementById('btn-attach');
+  if (btnAttach) {
+    btnAttach.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleChatMenu('attach-menu');
+    });
+  }
+  const attachMenu = document.getElementById('attach-menu');
+  if (attachMenu) {
+    attachMenu.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-attach]');
+      if (!btn) return;
+      closeChatMenus();
+      const action = btn.dataset.attach;
+      if (action === 'document') document.getElementById('file-document').click();
+      else if (action === 'media') document.getElementById('file-media').click();
+      else if (action === 'audio') document.getElementById('file-audio').click();
+      else if (action === 'sticker') document.getElementById('file-sticker').click();
+      else if (action === 'camera') openChatCamera();
+      else if (action === 'contact') document.getElementById('modal-chat-contact').classList.remove('hidden');
+      else if (action === 'poll') document.getElementById('modal-chat-poll').classList.remove('hidden');
+      else if (action === 'event') document.getElementById('modal-chat-event').classList.remove('hidden');
+    });
+  }
+
+  // Archivos ocultos: el tipo real se deduce del archivo elegido.
+  const fileDoc = document.getElementById('file-document');
+  if (fileDoc) {
+    fileDoc.addEventListener('change', async () => {
+      const file = fileDoc.files && fileDoc.files[0];
+      fileDoc.value = '';
+      if (file) await uploadChatFile(file, 'document', takeChatCaption());
+    });
+  }
+  const fileMedia = document.getElementById('file-media');
+  if (fileMedia) {
+    fileMedia.addEventListener('change', async () => {
+      const file = fileMedia.files && fileMedia.files[0];
+      fileMedia.value = '';
+      if (!file) return;
+      const kind = String(file.type || '').startsWith('video') ? 'video' : 'image';
+      await uploadChatFile(file, kind, takeChatCaption());
+    });
+  }
+  const fileAudio = document.getElementById('file-audio');
+  if (fileAudio) {
+    fileAudio.addEventListener('change', async () => {
+      const file = fileAudio.files && fileAudio.files[0];
+      fileAudio.value = '';
+      if (file) await uploadChatFile(file, 'audio', '');
+    });
+  }
+  const fileSticker = document.getElementById('file-sticker');
+  if (fileSticker) {
+    fileSticker.addEventListener('change', async () => {
+      const file = fileSticker.files && fileSticker.files[0];
+      fileSticker.value = '';
+      if (file) await uploadChatFile(file, 'sticker', '');
+    });
+  }
+
+  // Boton de camara y captura de foto.
+  const shot = document.getElementById('chat-camera-shot');
+  if (shot) shot.addEventListener('click', captureChatPhoto);
+  const cameraModal = document.getElementById('modal-chat-camera');
+  if (cameraModal) {
+    // Cerrar por la X, por Cancelar o clic fuera: apagar la camara siempre.
+    new MutationObserver(() => {
+      if (cameraModal.classList.contains('hidden')) stopChatCamera();
+    }).observe(cameraModal, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // Llamada y videollamada.
+  const btnCall = document.getElementById('btn-call');
+  if (btnCall) btnCall.addEventListener('click', () => openCallModal(false));
+  const btnVideoCall = document.getElementById('btn-video-call');
+  if (btnVideoCall) btnVideoCall.addEventListener('click', () => openCallModal(true));
+  const callVideo = document.getElementById('call-video');
+  if (callVideo) {
+    callVideo.addEventListener('click', () => {
+      const link = document.getElementById('call-wa-link');
+      if (link) window.open(link.href, '_blank', 'noopener');
+      chatToast('WhatsApp no permite iniciar videollamadas desde el panel: toca 🎥 dentro del chat.', 'error');
+    });
+  }
+  const callCopy = document.getElementById('call-copy');
+  if (callCopy) {
+    callCopy.addEventListener('click', async () => {
+      const phone = chatDigits(document.getElementById('call-phone').textContent);
+      try {
+        await navigator.clipboard.writeText(`+${phone}`);
+        chatToast('Numero copiado ✅');
+      } catch (err) {
+        chatToast('No se pudo copiar el numero', 'error');
+      }
+    });
+  }
+
+  // Menu de 3 puntos.
+  const btnMore = document.getElementById('btn-chat-more');
+  if (btnMore) {
+    btnMore.addEventListener('click', (e) => {
+      e.stopPropagation();
+      syncMuteLabel();
+      toggleChatMenu('chat-more-menu');
+    });
+  }
+  const moreMenu = document.getElementById('chat-more-menu');
+  if (moreMenu) {
+    moreMenu.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-more]');
+      if (!btn) return;
+      closeChatMenus();
+      const conv = chatConv();
+      const action = btn.dataset.more;
+      if (action === 'ficha') {
+        if (!conv) return chatToast('Elige una conversacion primero', 'error');
+        const tab = document.querySelector('.tab-btn[data-tab="tab-customers"]');
+        if (tab) tab.click();
+        const search = document.getElementById('cust-search');
+        if (search) {
+          search.value = conv.customer_phone || chatNombre(conv);
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      } else if (action === 'buscar') {
+        findInChat();
+      } else if (action === 'silenciar') {
+        toggleChatMuted();
+      } else if (action === 'exportar') {
+        exportChat();
+      } else if (action === 'cerrar') {
+        changeChatMode('CLOSED');
+      } else if (action === 'bloquear') {
+        blockChatCustomer();
+      } else if (action === 'vaciar') {
+        clearChat();
+      }
+    });
+  }
+
+  // Clic fuera de los menus flotantes / tecla Escape.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.chat-more-wrap') && !e.target.closest('.chat-attach-wrap')) closeChatMenus();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeChatMenus();
+  });
+
+  // Formularios de los modales de contacto/encuesta/evento.
+  const formContact = document.getElementById('form-chat-contact');
+  if (formContact) formContact.addEventListener('submit', submitChatContact);
+  const formPoll = document.getElementById('form-chat-poll');
+  if (formPoll) formPoll.addEventListener('submit', submitChatPoll);
+  const formEvent = document.getElementById('form-chat-event');
+  if (formEvent) formEvent.addEventListener('submit', submitChatEvent);
+}
+
 // Eventos del chat (una sola vez: los elementos son fijos, no se re-crean).
 (function initChatEvents() {
   const search = document.getElementById('chat-search');
@@ -1029,6 +1624,7 @@ async function deleteMessage(id) {
   if (btnSuggest) btnSuggest.addEventListener('click', requestSuggestion);
   const btnSummary = document.getElementById('btn-summary');
   if (btnSummary) btnSummary.addEventListener('click', requestSummary);
+  bindChatExtras();
 })();
 
 // Cargar el chat al abrir la pestaña, y refrescarlo mientras esté visible.
@@ -1047,6 +1643,8 @@ setInterval(() => {
   chatState.tick += 1;
   if (chatState.tick % 3 === 1) loadChatList();
   refreshChatMessages();
+  // Ticks (enviado/entregado/leido): se actualizan sin recargar el historial.
+  refreshChatStatuses();
   // Estado de conexion de WhatsApp reflejado en la barra del chat.
   const wa = document.getElementById('status-whatsapp');
   const conn = document.getElementById('chat-conn');

@@ -7,6 +7,7 @@
 // Cualquier otro evento se ignora de forma segura (Seccion 6, ultima linea).
 const KNOWN_EVENTS = new Set([
   'messages.upsert',
+  'messages.update',
   'connection.update',
   'qrcode.updated',
 ]);
@@ -155,8 +156,53 @@ function parseConnectionUpdate(payload) {
   const entry = payload?.data;
   return {
     state: entry?.state || null,
-    statusReason: entry?.statusReason || null,
+    statusReason: entry?.statusReason !== undefined ? entry.statusReason : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// messages.update -> cambios de estado (ACK) de los mensajes salientes.
+// WhatsApp informa: enviado (SERVER_ACK), entregado (DELIVERY_ACK) y leido
+// (READ). Se traducen a los estados que guarda la tabla messages.
+// ---------------------------------------------------------------------------
+const STATUS_BY_NAME = {
+  ERROR: 'FAILED',
+  PENDING: 'PENDING',
+  SERVER_ACK: 'SENT',
+  DELIVERY_ACK: 'DELIVERED',
+  READ: 'READ',
+  PLAYED: 'READ',
+};
+
+// Baileys tambien puede enviar el estado como numero (indice en esta lista).
+const STATUS_NAMES_BY_INDEX = ['ERROR', 'PENDING', 'SERVER_ACK', 'DELIVERY_ACK', 'READ', 'PLAYED'];
+
+function mapAckStatus(raw) {
+  const name = typeof raw === 'number' ? STATUS_NAMES_BY_INDEX[raw] : String(raw || '').toUpperCase();
+  return STATUS_BY_NAME[name] || null;
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+// Devuelve [{ externalMessageId, status }] solo para actualizaciones utiles.
+function parseMessagesUpdate(payload) {
+  const updates = [];
+  for (const item of toArray(payload && payload.data)) {
+    if (!item || typeof item !== 'object') continue;
+
+    const fromMe = item.fromMe !== undefined ? item.fromMe : item.key && item.key.fromMe;
+    if (fromMe === false) continue; // estado de un mensaje entrante: no interesa
+
+    const externalMessageId = item.keyId || (item.key && item.key.id);
+    const status = mapAckStatus(item.status !== undefined ? item.status : item.update && item.update.status);
+    if (!externalMessageId || !status || status === 'PENDING') continue;
+
+    updates.push({ externalMessageId: String(externalMessageId), status });
+  }
+  return updates;
 }
 
 module.exports = {
@@ -167,5 +213,6 @@ module.exports = {
   extractTextContent,
   findViewOnce,
   parseMessageUpsert,
+  parseMessagesUpdate,
   parseConnectionUpdate,
 };

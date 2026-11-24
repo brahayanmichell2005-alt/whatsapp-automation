@@ -50,6 +50,15 @@ async function receiveWhatsappEvent(req, res) {
       return res.status(200).json({ received: true, processed: !result.skipped, ...resultSummary(result) });
     }
 
+    if (event === 'messages.update') {
+      const updates = eventParser.parseMessagesUpdate(req.body);
+      if (!updates.length) {
+        return res.status(200).json({ received: true, processed: false, event });
+      }
+      const result = await messageIntakeService.applyStatusUpdates(updates);
+      return res.status(200).json({ received: true, processed: true, event, updated: result.updated });
+    }
+
     if (event === 'connection.update') {
       const parsed = eventParser.parseConnectionUpdate(req.body);
       await logModel.record({

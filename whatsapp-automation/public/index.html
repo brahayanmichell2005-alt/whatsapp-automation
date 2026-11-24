@@ -411,6 +411,8 @@
                     <div class="chat-sub" id="chat-sub"></div>
                   </div>
                   <div class="btn-row chat-header-actions">
+                    <button id="btn-call" class="chat-icon-btn call" type="button" title="Llamar por WhatsApp">📞</button>
+                    <button id="btn-video-call" class="chat-icon-btn" type="button" title="Videollamada por WhatsApp">🎥</button>
                     <select id="chat-stage" class="chat-mode" title="Etapa de embudo del cliente">
                     <option value="NUEVO">🆕 Nuevo</option>
                     <option value="NEGOCIANDO">🤝 Negociando</option>
@@ -424,6 +426,19 @@
                     <button id="btn-pin" class="btn btn-secondary" title="Anclar arriba en la bandeja">📌</button>
                 <button id="btn-suggest" class="btn btn-secondary" title="La IA propone una respuesta (no se envia)">✨ Sugerir</button>
                     <button id="btn-summary" class="btn btn-secondary" title="La IA resume la conversacion">📄 Resumen</button>
+                    <div class="chat-more-wrap">
+                      <button id="btn-chat-more" class="btn btn-secondary" type="button" title="Más opciones">⋮</button>
+                      <div class="chat-more-menu" id="chat-more-menu" hidden>
+                        <button type="button" data-more="ficha">👤 Ver ficha del cliente</button>
+                        <button type="button" data-more="buscar">🔍 Buscar en la conversación</button>
+                        <button type="button" data-more="silenciar">🔕 Silenciar notificaciones</button>
+                        <button type="button" data-more="exportar">📄 Exportar conversación</button>
+                        <div class="chat-more-sep"></div>
+                        <button type="button" data-more="cerrar">✅ Marcar como cerrada</button>
+                        <button type="button" data-more="bloquear" class="danger">🚫 Bloquear cliente</button>
+                        <button type="button" data-more="vaciar" class="danger">🗑️ Vaciar chat</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div class="chat-messages" id="chat-messages">
@@ -431,7 +446,20 @@
                 </div>
                 <div class="chat-ai" id="chat-ai" hidden></div>
                 <div class="quick-replies" id="quick-replies" hidden></div>
+                <div class="chat-attach-wrap">
+                  <div class="attach-menu" id="attach-menu" hidden>
+                    <button type="button" data-attach="document"><span class="am-ico doc">📄</span> Documento</button>
+                    <button type="button" data-attach="media"><span class="am-ico foto">🖼️</span> Fotos y videos</button>
+                    <button type="button" data-attach="camera"><span class="am-ico cam">📷</span> Cámara</button>
+                    <button type="button" data-attach="audio"><span class="am-ico audio">🎤</span> Audio</button>
+                    <button type="button" data-attach="contact"><span class="am-ico cont">👤</span> Contacto</button>
+                    <button type="button" data-attach="poll"><span class="am-ico poll">📊</span> Encuesta</button>
+                    <button type="button" data-attach="event"><span class="am-ico event">📅</span> Evento</button>
+                    <button type="button" data-attach="sticker"><span class="am-ico sticker">🟢</span> Nuevo sticker</button>
+                  </div>
+                </div>
                 <form class="chat-inputbar" id="chat-form">
+                  <button type="button" id="btn-attach" class="chat-icon-btn" title="Adjuntar">📎</button>
                   <input type="text" id="chat-input" placeholder="Escribe como operador y presiona Enter..." autocomplete="off" maxlength="4096" />
                   <button type="submit" class="btn btn-primary">Enviar</button>
                 </form>
@@ -712,6 +740,138 @@
       <span class="ai-fab-ring"></span>
       <span class="ai-fab-dot hidden" id="ai-fab-dot"></span>
     </button>
+  </div>
+
+  <!-- Adjuntos del chat en vivo: archivos ocultos que dispara el menu -->
+  <input type="file" id="file-document" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden />
+  <input type="file" id="file-media" accept="image/*,video/*" hidden />
+  <input type="file" id="file-audio" accept="audio/*" hidden />
+  <input type="file" id="file-sticker" accept="image/*" hidden />
+
+  <!-- Modal: enviar contacto -->
+  <div id="modal-chat-contact" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>👤 Enviar contacto</h3>
+        <button type="button" class="modal-x" data-close="modal-chat-contact">✕</button>
+      </div>
+      <form id="form-chat-contact">
+        <div class="modal-body">
+          <label class="field">Nombre
+            <input type="text" id="chat-contact-name" maxlength="120" placeholder="Ej: María García" required />
+          </label>
+          <label class="field">Teléfono
+            <input type="text" id="chat-contact-phone" maxlength="20" placeholder="Ej: 51999000111" required />
+          </label>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-close="modal-chat-contact">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Enviar contacto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: encuesta -->
+  <div id="modal-chat-poll" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>📊 Enviar encuesta</h3>
+        <button type="button" class="modal-x" data-close="modal-chat-poll">✕</button>
+      </div>
+      <form id="form-chat-poll">
+        <div class="modal-body">
+          <label class="field">Pregunta
+            <input type="text" id="chat-poll-question" maxlength="255" placeholder="Ej: ¿Qué equipo te interesa?" required />
+          </label>
+          <label class="field">Opción 1
+            <input type="text" id="chat-poll-opt1" maxlength="100" required />
+          </label>
+          <label class="field">Opción 2
+            <input type="text" id="chat-poll-opt2" maxlength="100" required />
+          </label>
+          <label class="field">Opción 3 (opcional)
+            <input type="text" id="chat-poll-opt3" maxlength="100" />
+          </label>
+          <label class="field">Opción 4 (opcional)
+            <input type="text" id="chat-poll-opt4" maxlength="100" />
+          </label>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-close="modal-chat-poll">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Enviar encuesta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: evento -->
+  <div id="modal-chat-event" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>📅 Enviar evento</h3>
+        <button type="button" class="modal-x" data-close="modal-chat-event">✕</button>
+      </div>
+      <form id="form-chat-event">
+        <div class="modal-body">
+          <label class="field">Nombre del evento
+            <input type="text" id="chat-event-name" maxlength="200" placeholder="Ej: Instalación de router" required />
+          </label>
+          <label class="field">Fecha y hora
+            <input type="datetime-local" id="chat-event-start" required />
+          </label>
+          <label class="field">Lugar (opcional)
+            <input type="text" id="chat-event-location" maxlength="200" placeholder="Ej: Av. Lima 123" />
+          </label>
+          <label class="field">Descripción (opcional)
+            <textarea id="chat-event-desc" rows="2" maxlength="1024"></textarea>
+          </label>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-close="modal-chat-event">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Enviar evento</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: camara (foto) -->
+  <div id="modal-chat-camera" class="modal-overlay hidden">
+    <div class="modal modal-md">
+      <div class="modal-head">
+        <h3>📷 Cámara</h3>
+        <button type="button" class="modal-x" data-close="modal-chat-camera">✕</button>
+      </div>
+      <div class="modal-body">
+        <video id="chat-camera-video" autoplay playsinline class="camera-video"></video>
+        <p class="hint-note" id="chat-camera-note">Toma una foto y envíala como imagen.</p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close="modal-chat-camera">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="chat-camera-shot">📸 Tomar foto y enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: llamada -->
+  <div id="modal-call" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head">
+        <h3>📞 Llamada</h3>
+        <button type="button" class="modal-x" data-close="modal-call">✕</button>
+      </div>
+      <div class="modal-body call-body">
+        <div class="call-avatar" id="call-avatar">WA</div>
+        <div class="call-name" id="call-name">Cliente</div>
+        <div class="call-phone" id="call-phone"></div>
+        <p class="hint-note">La llamada se abre en WhatsApp. WhatsApp no permite iniciar llamadas desde el panel, pero aquí ves el número y el historial de llamadas entrantes/perdidas.</p>
+        <div class="call-actions">
+          <a id="call-wa-link" class="btn btn-primary" href="#" target="_blank" rel="noopener">📞 Llamar por WhatsApp</a>
+          <button type="button" class="btn btn-secondary" id="call-video">🎥 Video</button>
+          <button type="button" class="btn btn-secondary" id="call-copy">Copiar número</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="js/app.js"></script>

@@ -30,6 +30,12 @@ async function requireAuthFlexible(req, res, next) {
 
 router.get('/', requireAuth, messageController.list);
 router.post('/', requireAuth, messageController.send);
+router.post('/media', requireAuth, messageController.sendMedia);
+router.post('/contact', requireAuth, messageController.sendContact);
+router.post('/poll', requireAuth, messageController.sendPoll);
+router.post('/event', requireAuth, messageController.sendEvent);
+router.get('/statuses', requireAuth, messageController.statuses);
+router.delete('/', requireAuth, messageController.clearConversation);
 router.get('/suggestions', requireAuth, messageController.suggestions);
 router.get('/summary', requireAuth, messageController.summary);
 router.get('/:id/media', requireAuthFlexible, messageController.media);

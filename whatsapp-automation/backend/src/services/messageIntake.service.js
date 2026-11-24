@@ -564,4 +564,18 @@ async function processAutomatedReply({ customer, conversation, content, prefs = 
   }
 }
 
-module.exports = { handleInboundMessage, buildViewOnceReply };
+async function applyStatusUpdates(updates) {
+  const list = Array.isArray(updates) ? updates : [];
+  let updated = 0;
+  for (const item of list) {
+    try {
+      const row = await messageModel.updateStatusByExternalId(item.externalMessageId, item.status);
+      if (row) updated += 1;
+    } catch (err) {
+      logger.warn({ err: err.message, id: item.externalMessageId }, 'No se pudo actualizar el estado del mensaje');
+    }
+  }
+  return { updated };
+}
+
+module.exports = { handleInboundMessage, buildViewOnceReply, applyStatusUpdates };

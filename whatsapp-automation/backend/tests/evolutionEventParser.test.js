@@ -154,4 +154,45 @@ describe('evolutionEventParser', () => {
     const result = parser.parseConnectionUpdate({ data: { state: 'open' } });
     expect(result.state).toBe('open');
   });
+
+  test('parseMessagesUpdate traduce los ACK de WhatsApp a estados del panel', () => {
+    const updates = parser.parseMessagesUpdate({
+      data: [
+        { keyId: 'ABC123', fromMe: true, status: 'SERVER_ACK' },
+        { keyId: 'ABC123', fromMe: true, status: 'DELIVERY_ACK' },
+        { keyId: 'ABC123', fromMe: true, status: 'READ' },
+        { keyId: 'ABC123', fromMe: true, status: 'ERROR' },
+      ],
+    });
+    expect(updates).toEqual([
+      { externalMessageId: 'ABC123', status: 'SENT' },
+      { externalMessageId: 'ABC123', status: 'DELIVERED' },
+      { externalMessageId: 'ABC123', status: 'READ' },
+      { externalMessageId: 'ABC123', status: 'FAILED' },
+    ]);
+  });
+
+  test('parseMessagesUpdate acepta el estado numerico y el key anidado', () => {
+    const updates = parser.parseMessagesUpdate({
+      data: [
+        { key: { id: 'XYZ', fromMe: true }, status: 3 },
+        { key: { id: 'XYZ', fromMe: true }, status: 4 },
+      ],
+    });
+    expect(updates).toEqual([
+      { externalMessageId: 'XYZ', status: 'DELIVERED' },
+      { externalMessageId: 'XYZ', status: 'READ' },
+    ]);
+  });
+
+  test('parseMessagesUpdate ignora estados de mensajes entrantes y pendientes', () => {
+    const updates = parser.parseMessagesUpdate({
+      data: [
+        { key: { id: 'IN1', fromMe: false }, status: 'READ' },
+        { key: { id: 'OUT1', fromMe: true }, status: 'PENDING' },
+        { key: { id: 'OUT2', fromMe: true }, status: 'DESCONOCIDO' },
+      ],
+    });
+    expect(updates).toEqual([]);
+  });
 });
