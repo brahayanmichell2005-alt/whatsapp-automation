@@ -13,7 +13,7 @@ const logger = require('../utils/logger');
 const { pool } = require('../config/database');
 
 // Eventos que el backend realmente procesa (ver evolutionEventParser).
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
 
 // La URL de Evolution API se puede cambiar sin tocar Vercel: si existe la
 // clave evolution_api_url en system_settings, tiene prioridad sobre
